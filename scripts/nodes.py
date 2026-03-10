@@ -108,6 +108,7 @@ def _call_llm_with_session(
     history = _get_node_history(state, node_id)
     recent = [{"role": m["role"], "content": m["content"]} for m in history[:-1]][-20:]
 
+    cfg = load_pipeline_config().get("pipeline", {})
     gateway_session_key = build_contentpipe_session_key(state["run_id"], node_id, "main")
     result = call_llm(
         prompt,
@@ -117,10 +118,74 @@ def _call_llm_with_session(
         chat_history=recent,
         system_prompt=prompt,
         gateway_session_key=gateway_session_key,
+        gateway_agent_id=cfg.get("gateway_agent_id") if cfg.get("llm_mode") == "gateway" else None,
     )
 
     _append_node_session(state, node_id, "assistant", result, tag=f"{node_id}_exec", internal=True)
     return result
+
+
+def _blank_agent_output_candidates(run_id: str, node_id: str, filename: str) -> list[Path]:
+    cfg = load_pipeline_config().get("pipeline", {})
+    primary_root = Path(__file__).resolve().parents[3]  # clawdbot_workspace
+    fallback_root = Path(cfg.get("gateway_agent_workspace", "/home/ssp/work/openclawWS/contentpipe_blank_workspace"))
+    return [
+        primary_root / "runs" / run_id / node_id / filename,
+        fallback_root / "runs" / run_id / node_id / filename,
+    ]
+
+
+def _call_llm_to_file_with_session(
+    state: ContentState,
+    node_id: str,
+    prompt: str,
+    context: str,
+    *,
+    model: str | None,
+    output_filename: str,
+    output_kind: str,
+    max_tokens: int = 8192,
+) -> tuple[str, str]:
+    """让 blank-agent 把最终产物写入文件；返回 (agent_reply, file_content)。"""
+    cfg = load_pipeline_config().get("pipeline", {})
+    gateway_agent_id = cfg.get("gateway_agent_id")
+    candidates = _blank_agent_output_candidates(state["run_id"], node_id, output_filename)
+    primary_target = candidates[0]
+    for path in candidates:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if path.exists():
+            path.unlink()
+
+    write_instruction = (
+        f"{context}\n\n"
+        f"=== OUTPUT CONTRACT ===\n"
+        f"Use the write tool to create or overwrite the file `runs/{state['run_id']}/{node_id}/{output_filename}` in your workspace.\n"
+        f"The file must contain ONLY the final {output_kind}.\n"
+        f"Do not include explanations, self-checks, prefaces, markdown fences, or commentary outside the file.\n"
+        f"After writing the file, you may reply briefly."
+    )
+
+    _append_node_session(state, node_id, "user", write_instruction, tag=f"{node_id}_exec", internal=True)
+    history = _get_node_history(state, node_id)
+    recent = [{"role": m["role"], "content": m["content"]} for m in history[:-1]][-20:]
+    agent_reply = call_llm(
+        prompt,
+        write_instruction,
+        model=model,
+        max_tokens=max_tokens,
+        chat_history=recent,
+        system_prompt=prompt,
+        gateway_session_key=build_contentpipe_session_key(state["run_id"], node_id, "main"),
+        gateway_agent_id=gateway_agent_id,
+    )
+    _append_node_session(state, node_id, "assistant", agent_reply, tag=f"{node_id}_exec", internal=True)
+
+    content = ""
+    for path in candidates:
+        if path.exists():
+            content = path.read_text()
+            break
+    return agent_reply, content
 
 
 # ── Agent 节点 ────────────────────────────────────────────────
@@ -182,11 +247,20 @@ def scout_node(state: ContentState) -> ContentState:
         context_parts.append(f"\n--- 社交平台讨论（Twitter/小红书） ---\n{json.dumps(social_results, ensure_ascii=False, indent=2)}")
     context = "\n".join(context_parts)
 
-    result = _call_llm_with_session(state, "scout", prompt, context, model=_get_model("scout"))
+    result, topic_yaml = _call_llm_to_file_with_session(
+        state,
+        "scout",
+        prompt,
+        context,
+        model=_get_model("scout"),
+        output_filename="topic.yaml",
+        output_kind="YAML briefing document",
+        max_tokens=8192,
+    )
 
-    # 解析 YAML 输出（新 schema：完整的 Scout YAML）
+    # 解析 YAML 输出（优先读文件产物）
     try:
-        parsed = yaml.safe_load(_strip_code_fence(result))
+        parsed = yaml.safe_load(_strip_code_fence(topic_yaml or result))
         if not isinstance(parsed, dict):
             parsed = {"topic": {"title": "解析失败"}}
     except Exception:
@@ -231,7 +305,7 @@ def scout_node(state: ContentState) -> ContentState:
 
     state["current_stage"] = "scout"
     # 保存完整 Scout YAML（含所有字段）
-    _save_artifact(state["run_id"], "topic.yaml", yaml.dump(parsed, allow_unicode=True, default_flow_style=False))
+    _save_artifact(state["run_id"], "topic.yaml", topic_yaml or yaml.dump(parsed, allow_unicode=True, default_flow_style=False))
     _save_artifact(state["run_id"], "scout_raw.txt", result)
     _save_state(state)
     return state
@@ -324,11 +398,20 @@ def researcher_node(state: ContentState) -> ContentState:
 
     context = "\n".join(context_parts)
 
-    result = _call_llm_with_session(state, "researcher", prompt, context, model=_get_model("researcher"), max_tokens=8192)
+    result, research_yaml = _call_llm_to_file_with_session(
+        state,
+        "researcher",
+        prompt,
+        context,
+        model=_get_model("researcher"),
+        output_filename="research.yaml",
+        output_kind="YAML research packet",
+        max_tokens=8192,
+    )
 
-    # 解析 YAML 输出（新 schema）
+    # 解析 YAML 输出（优先读文件产物）
     try:
-        parsed = yaml.safe_load(_strip_code_fence(result))
+        parsed = yaml.safe_load(_strip_code_fence(research_yaml or result))
         if not isinstance(parsed, dict):
             parsed = {"raw": result}
     except Exception:
@@ -368,7 +451,7 @@ def researcher_node(state: ContentState) -> ContentState:
     }
 
     state["current_stage"] = "researcher"
-    _save_artifact(state["run_id"], "research.yaml", yaml.dump(parsed, allow_unicode=True, default_flow_style=False))
+    _save_artifact(state["run_id"], "research.yaml", research_yaml or yaml.dump(parsed, allow_unicode=True, default_flow_style=False))
     _save_artifact(state["run_id"], "researcher_raw.txt", result)
     _save_state(state)
     return state
@@ -499,18 +582,23 @@ def writer_node(state: ContentState) -> ContentState:
     else:
         context = f"以下是你的完整写作上下文包（writer_context），包含立题层、执行层、证据材料层三层信息。\n\n{yaml.dump(writer_context, allow_unicode=True, default_flow_style=False)}"
 
-    result = _call_llm_with_session(state, "writer", prompt, context, model=_get_model("writer"), max_tokens=8192)
+    result, content = _call_llm_to_file_with_session(
+        state,
+        "writer",
+        prompt,
+        context,
+        model=_get_model("writer"),
+        output_filename="article_draft.md",
+        output_kind="Markdown article正文",
+        max_tokens=8192,
+    )
 
-    # 解析 YAML 输出
-    try:
-        parsed = yaml.safe_load(_strip_code_fence(result))
-        article = parsed.get("article", parsed) if isinstance(parsed, dict) else {"content": result}
-    except Exception:
-        article = {"title": state.get("topic", {}).get("title", ""), "content": result}
-
-    # 计算字数
-    content = article.get("content", "")
-    article["word_count"] = len(content)
+    content = (content or result).strip()
+    article = {
+        "title": state.get("topic", {}).get("title", ""),
+        "content": content,
+        "word_count": len(content),
+    }
 
     state["article"] = article
     _save_artifact(state["run_id"], "article_draft.md", content)
@@ -527,10 +615,22 @@ def writer_node(state: ContentState) -> ContentState:
 
     # 去 AI 味用 Sonnet 4.6（文笔+对抗检测），独立 session 不混入 writer 对话
     de_ai_model = _get_model("de_ai_editor") or "anthropic/claude-sonnet-4-6"
-    de_ai_result = _call_llm_with_session(
-        state, "de_ai_editor", de_ai_prompt, de_ai_context,
-        model=de_ai_model, max_tokens=8192
+    de_ai_reply, de_ai_file = _call_llm_to_file_with_session(
+        state,
+        "de_ai_editor",
+        de_ai_prompt,
+        de_ai_context,
+        model=de_ai_model,
+        output_filename="article_edited.md",
+        output_kind="Markdown article正文（去AI味后）",
+        max_tokens=8192,
     )
+
+    de_ai_result = (de_ai_file or de_ai_reply).strip()
+    bad_markers = ["自检清单", "改写完成", "结构粉碎", "风格拟态", "我来根据", "以下是"]
+    if len(de_ai_result) < 200 or any(m in de_ai_result for m in bad_markers):
+        logger.warning("de_ai output invalid, fallback to original article")
+        de_ai_result = content
 
     state["article_edited"] = de_ai_result
     _save_artifact(state["run_id"], "article_edited.md", de_ai_result)
@@ -557,7 +657,21 @@ def de_ai_editor_node(state: ContentState) -> ContentState:
     ]
     context = "\n".join(context_parts)
 
-    result = _call_llm_with_session(state, "de_ai_editor", prompt, context, model=_get_model("de_ai_editor"), max_tokens=8192)
+    reply, file_content = _call_llm_to_file_with_session(
+        state,
+        "de_ai_editor",
+        prompt,
+        context,
+        model=_get_model("de_ai_editor"),
+        output_filename="article_edited.md",
+        output_kind="Markdown article正文（去AI味后）",
+        max_tokens=8192,
+    )
+
+    result = (file_content or reply).strip()
+    bad_markers = ["自检清单", "改写完成", "结构粉碎", "风格拟态", "我来根据", "以下是"]
+    if len(result) < 200 or any(m in result for m in bad_markers):
+        result = article.get("content", "")
 
     state["article_edited"] = result
     state["current_stage"] = "de_ai_editor"
@@ -587,13 +701,22 @@ def director_node(state: ContentState) -> ContentState:
             context_parts.append(f"\n--- 上一版配图方案 ---\n{json.dumps(prev_plan, ensure_ascii=False)}")
 
     context = "\n".join(context_parts)
-    result = _call_llm_with_session(state, "director", prompt, context, model=_get_model("director"))
+    result, visual_plan_text = _call_llm_to_file_with_session(
+        state,
+        "director",
+        prompt,
+        context,
+        model=_get_model("director"),
+        output_filename="visual_plan.json",
+        output_kind="JSON visual plan",
+        max_tokens=8192,
+    )
 
     # 保存原始输出（调试用）
     _save_artifact(state["run_id"], "director_raw.txt", result)
 
     try:
-        visual_plan = json.loads(_strip_code_fence(result))
+        visual_plan = json.loads(_strip_code_fence(visual_plan_text or result))
     except (json.JSONDecodeError, ValueError):
         # LLM 返回的 JSON 可能有尾部逗号或注释，尝试修复
         cleaned = _strip_code_fence(result)
@@ -608,7 +731,7 @@ def director_node(state: ContentState) -> ContentState:
     state["current_stage"] = "director"
     state["review_action"] = ""  # 清空，等待人工审核
     state["user_feedback"] = {}
-    _save_artifact(state["run_id"], "visual_plan.json", json.dumps(visual_plan, ensure_ascii=False, indent=2))
+    _save_artifact(state["run_id"], "visual_plan.json", visual_plan_text or json.dumps(visual_plan, ensure_ascii=False, indent=2))
     _save_state(state)
     return state
 
@@ -630,12 +753,21 @@ def director_refine_node(state: ContentState) -> ContentState:
         context_parts.append(f"\n--- 用户修改意见 ---\n{json.dumps(feedback, ensure_ascii=False)}")
 
     context = "\n".join(context_parts)
-    result = _call_llm_with_session(state, "director_refine", prompt, context, model=_get_model("director_refine"))
+    result, image_candidates_text = _call_llm_to_file_with_session(
+        state,
+        "director_refine",
+        prompt,
+        context,
+        model=_get_model("director_refine"),
+        output_filename="image_candidates.json",
+        output_kind="JSON image candidates array",
+        max_tokens=8192,
+    )
 
     _save_artifact(state["run_id"], "director_refine_raw.txt", result)
 
     try:
-        image_candidates = json.loads(_strip_code_fence(result))
+        image_candidates = json.loads(_strip_code_fence(image_candidates_text or result))
     except (json.JSONDecodeError, ValueError):
         cleaned = _strip_code_fence(result)
         cleaned = re.sub(r',\s*([}\]])', r'\1', cleaned)
@@ -649,7 +781,7 @@ def director_refine_node(state: ContentState) -> ContentState:
     state["current_stage"] = "director_refine"
     state["review_action"] = ""
     state["user_feedback"] = {}
-    _save_artifact(state["run_id"], "image_candidates.json", json.dumps(image_candidates, ensure_ascii=False, indent=2))
+    _save_artifact(state["run_id"], "image_candidates.json", image_candidates_text or json.dumps(image_candidates, ensure_ascii=False, indent=2))
     _save_state(state)
     return state
 

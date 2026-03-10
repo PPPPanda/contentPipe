@@ -319,7 +319,7 @@ async def api_chat(request: Request, run_id: str):
     node_id = node_id or raw.get("current_stage", "")
 
     from web.run_manager import get_chat_history, save_chat_message
-    from tools import call_llm
+    from tools import call_llm, load_pipeline_config
 
     history = get_chat_history(run_id, node_id)
     save_chat_message(run_id, node_id, "user", user_msg)
@@ -394,6 +394,7 @@ async def api_chat(request: Request, run_id: str):
     # 审核聊天用该节点配置的同一个 model（保持写作风格一致）
     from nodes import _get_model
     chat_model = _get_model(node_id) or "dashscope/qwen3.5-plus"
+    gateway_agent_id = load_pipeline_config().get("pipeline", {}).get("gateway_agent_id")
 
     try:
         loop = asyncio.get_event_loop()
@@ -406,6 +407,7 @@ async def api_chat(request: Request, run_id: str):
                 chat_history=recent,
                 system_prompt=system_prompt,
                 gateway_session_key=build_contentpipe_session_key(run_id, node_id, "main"),
+                gateway_agent_id=gateway_agent_id,
             )
         )
     except Exception as e:
@@ -841,7 +843,7 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
     """
     from web.run_manager import get_chat_history, _save_state
     from nodes import _save_artifact
-    from tools import call_llm
+    from tools import call_llm, load_pipeline_config
     import yaml as _yaml
 
     # 节点字段映射 — YAML 类节点
@@ -862,6 +864,8 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
     visible = [m for m in history if not m.get("internal")]
     if len(visible) < 2:
         return
+
+    gateway_agent_id = load_pipeline_config().get("pipeline", {}).get("gateway_agent_id")
 
     # 取最新一轮对话
     last_user = ""
@@ -899,6 +903,7 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
             model="dashscope/qwen3.5-flash",
             max_tokens=10,
             gateway_session_key=build_contentpipe_session_key(run_id, node_id, "judge"),
+            gateway_agent_id=gateway_agent_id,
         )
     )
 
@@ -943,6 +948,7 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
                 model=writer_model,
                 max_tokens=8192,
                 gateway_session_key=build_contentpipe_session_key(run_id, node_id, "article-sync"),
+                gateway_agent_id=gateway_agent_id,
             )
         )
 
@@ -989,6 +995,7 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
 输出更新后的完整 YAML：""",
             model="dashscope/qwen3.5-flash",
             gateway_session_key=build_contentpipe_session_key(run_id, node_id, "yaml-sync"),
+            gateway_agent_id=gateway_agent_id,
         )
     )
 

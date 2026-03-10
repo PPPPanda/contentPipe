@@ -51,6 +51,7 @@ def call_llm(
     chat_history: list[dict] | None = None,
     system_prompt: str | None = None,
     gateway_session_key: str | None = None,
+    gateway_agent_id: str | None = None,
 ) -> str:
     """
     调用 LLM。
@@ -78,6 +79,7 @@ def call_llm(
             gateway_url=pipeline_config.get("gateway_url", "http://localhost:18789"),
             chat_history=chat_history,
             gateway_session_key=gateway_session_key,
+            gateway_agent_id=gateway_agent_id,
         )
 
     if "/" in model:
@@ -119,11 +121,14 @@ def _call_via_gateway(
     chat_history: list[dict] | None = None,
     system_prompt: str | None = None,
     gateway_session_key: str | None = None,
+    gateway_agent_id: str | None = None,
 ) -> str:
     """通过 OpenClaw Gateway 调用 LLM。"""
     extra_headers = {}
     if gateway_session_key:
         extra_headers["X-OpenClaw-Session-Key"] = gateway_session_key
+    if gateway_agent_id:
+        extra_headers["X-OpenClaw-Agent-Id"] = gateway_agent_id
     headers = build_gateway_headers(extra_headers or None)
 
     messages = []
