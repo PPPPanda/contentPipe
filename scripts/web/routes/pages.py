@@ -1,0 +1,128 @@
+"""
+ContentPipe Web UI — 页面路由
+
+服务端渲染 Jinja2 模板，返回完整 HTML 页面。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi import APIRouter, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
+
+from web.run_manager import (
+    list_runs, get_run, get_dashboard_stats,
+    get_node_output, get_node_input,
+    get_run_artifact, load_settings,
+    PIPELINE_NODES,
+)
+
+router = APIRouter()
+
+TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
+templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+@router.get("/", response_class=HTMLResponse)
+async def dashboard(request: Request):
+    """Dashboard 总览"""
+    stats = get_dashboard_stats()
+    return templates.TemplateResponse("dashboard.html", {
+        "request": request,
+        "stats": stats,
+        "page": "dashboard",
+    })
+
+
+@router.get("/runs", response_class=HTMLResponse)
+async def run_list(request: Request):
+    """Run 列表"""
+    runs = list_runs()
+    return templates.TemplateResponse("run_list.html", {
+        "request": request,
+        "runs": runs,
+        "page": "runs",
+    })
+
+
+@router.get("/runs/new", response_class=HTMLResponse)
+async def new_run_form(request: Request):
+    """新建 Run 表单"""
+    return templates.TemplateResponse("run_new.html", {
+        "request": request,
+        "page": "runs",
+    })
+
+
+@router.get("/runs/{run_id}", response_class=HTMLResponse)
+async def run_detail(request: Request, run_id: str):
+    """Run 详情页"""
+    run = get_run(run_id)
+    if not run:
+        return HTMLResponse("<h1>Run not found</h1>", status_code=404)
+    return templates.TemplateResponse("run_detail.html", {
+        "request": request,
+        "run": run,
+        "nodes": PIPELINE_NODES,
+        "page": "runs",
+    })
+
+
+@router.get("/runs/{run_id}/review", response_class=HTMLResponse)
+async def review_page(request: Request, run_id: str, node: str | None = None):
+    """通用节点交互页 — 每个节点都可以讨论+审批
+
+    ?node=xxx 可打开任意已完成节点的历史聊天和输出。
+    不带参数则打开当前 stage。
+    """
+    run = get_run(run_id)
+    if not run:
+        return HTMLResponse("<h1>Run not found</h1>", status_code=404)
+
+    # 指定节点 or 当前节点
+    stage = node or run.get("current_stage", "")
+    # 是否只读模式（查看已完成节点的历史，不能 approve/revise）
+    is_readonly = (node is not None and node != run.get("current_stage", ""))
+    node_output = get_node_output(run_id, stage)
+
+    # 节点元信息
+    node_labels = {n["id"]: n for n in PIPELINE_NODES}
+    node_info = node_labels.get(stage, {"id": stage, "label": stage, "icon": "⚙️"})
+
+    return templates.TemplateResponse("review_node.html", {
+        "request": request,
+        "run": run,
+        "stage": stage,
+        "node_info": node_info,
+        "node_output": node_output,
+        "is_readonly": is_readonly,
+        "page": "runs",
+    })
+
+
+@router.get("/runs/{run_id}/preview", response_class=HTMLResponse)
+async def preview_page(request: Request, run_id: str):
+    """文章预览页"""
+    run = get_run(run_id)
+    if not run:
+        return HTMLResponse("<h1>Run not found</h1>", status_code=404)
+    html_content = get_run_artifact(run_id, "formatted.html") or "<p>排版尚未完成</p>"
+    return templates.TemplateResponse("preview.html", {
+        "request": request,
+        "run": run,
+        "html_content": html_content,
+        "page": "runs",
+    })
+
+
+@router.get("/settings", response_class=HTMLResponse)
+async def settings_page(request: Request):
+    """设置页"""
+    settings = load_settings()
+    return templates.TemplateResponse("settings.html", {
+        "request": request,
+        "settings": settings,
+        "page": "settings",
+    })

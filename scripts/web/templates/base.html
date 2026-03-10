@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}ContentPipe{% endblock %}</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
+    <script>
+    tailwind.config = {
+        theme: {
+            extend: {
+                colors: {
+                    brand: { 400: '#6dd5fa', 500: '#2193b0', 600: '#1a7a96' },
+                    surface: { 900: '#0b0e17', 800: '#111827', 700: '#1a2035', 600: '#222d44' },
+                    accent: { cyan: '#00f2fe', purple: '#a855f7', pink: '#ec4899' },
+                },
+                backgroundImage: {
+                    'gradient-brand': 'linear-gradient(135deg, #00f2fe 0%, #4facfe 50%, #a855f7 100%)',
+                    'gradient-card': 'linear-gradient(145deg, rgba(26,32,53,0.9) 0%, rgba(11,14,23,0.95) 100%)',
+                    'gradient-btn': 'linear-gradient(135deg, #2193b0 0%, #6dd5fa 100%)',
+                    'gradient-danger': 'linear-gradient(135deg, #dc2626 0%, #f87171 100%)',
+                    'gradient-warn': 'linear-gradient(135deg, #d97706 0%, #fbbf24 100%)',
+                }
+            }
+        }
+    }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body {
+            background: #0b0e17;
+            color: #e2e8f0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+        /* 全局背景光晕 */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -40%;
+            left: -20%;
+            width: 80%;
+            height: 80%;
+            background: radial-gradient(ellipse, rgba(0,242,254,0.04) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+        body::after {
+            content: '';
+            position: fixed;
+            bottom: -30%;
+            right: -20%;
+            width: 60%;
+            height: 60%;
+            background: radial-gradient(ellipse, rgba(168,85,247,0.03) 0%, transparent 70%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* 侧边栏 */
+        .sidebar {
+            background: linear-gradient(180deg, #111827 0%, #0b0e17 100%);
+            border-right: 1px solid rgba(255,255,255,0.06);
+        }
+
+        /* 卡片 */
+        .card {
+            background: linear-gradient(145deg, rgba(26,32,53,0.8) 0%, rgba(17,24,39,0.9) 100%);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 1rem;
+            backdrop-filter: blur(12px);
+            transition: all 0.3s ease;
+        }
+        .card-hover:hover {
+            border-color: rgba(0,242,254,0.2);
+            box-shadow: 0 0 24px rgba(0,242,254,0.06);
+            transform: translateY(-1px);
+        }
+
+        /* 导航 */
+        .nav-active {
+            background: linear-gradient(135deg, rgba(0,242,254,0.1) 0%, rgba(168,85,247,0.08) 100%);
+            color: #6dd5fa;
+            border: 1px solid rgba(0,242,254,0.15);
+        }
+        .nav-item {
+            border: 1px solid transparent;
+            transition: all 0.2s ease;
+        }
+        .nav-item:hover:not(.nav-active) {
+            background: rgba(255,255,255,0.03);
+            border-color: rgba(255,255,255,0.04);
+        }
+
+        /* 统计卡片 */
+        .stat-card {
+            background: linear-gradient(145deg, rgba(26,32,53,0.6) 0%, rgba(11,14,23,0.8) 100%);
+            border: 1px solid rgba(255,255,255,0.06);
+            position: relative;
+            overflow: hidden;
+        }
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, #00f2fe, #a855f7);
+            opacity: 0.6;
+        }
+
+        /* 按钮 */
+        .btn-primary {
+            background: linear-gradient(135deg, #2193b0 0%, #6dd5fa 100%);
+            color: #fff;
+            border: none;
+            border-radius: 0.625rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 12px rgba(33,147,176,0.3);
+        }
+        .btn-primary:hover {
+            box-shadow: 0 4px 20px rgba(33,147,176,0.5);
+            transform: translateY(-1px);
+        }
+        .btn-secondary {
+            background: rgba(255,255,255,0.04);
+            color: #94a3b8;
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 0.625rem;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        .btn-secondary:hover {
+            background: rgba(255,255,255,0.08);
+            color: #e2e8f0;
+            border-color: rgba(255,255,255,0.15);
+        }
+        .btn-danger {
+            background: linear-gradient(135deg, #991b1b 0%, #dc2626 100%);
+            color: #fff;
+            border: none;
+            border-radius: 0.625rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        .btn-danger:hover {
+            box-shadow: 0 4px 16px rgba(220,38,38,0.4);
+        }
+        .btn-warn {
+            background: linear-gradient(135deg, #92400e 0%, #d97706 100%);
+            color: #fff;
+            border: none;
+            border-radius: 0.625rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        .btn-warn:hover {
+            box-shadow: 0 4px 16px rgba(217,119,6,0.4);
+        }
+
+        /* 表格 */
+        .data-table th {
+            font-size: 0.68rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            color: #64748b;
+            padding: 0.625rem 0.875rem;
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .data-table td {
+            padding: 0.75rem 0.875rem;
+            border-bottom: 1px solid rgba(255,255,255,0.03);
+        }
+        .data-table tr:hover {
+            background: rgba(255,255,255,0.02);
+        }
+
+        /* 进度条 */
+        .progress-bar {
+            background: rgba(255,255,255,0.06);
+            border-radius: 9999px;
+            overflow: hidden;
+        }
+        .progress-fill {
+            background: linear-gradient(90deg, #00f2fe, #4facfe);
+            border-radius: 9999px;
+            transition: width 0.5s ease;
+        }
+
+        /* 动画 */
+        @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
+
+        @keyframes glow { 0%, 100% { box-shadow: 0 0 8px rgba(0,242,254,0.1); } 50% { box-shadow: 0 0 16px rgba(0,242,254,0.2); } }
+        .glow { animation: glow 2s ease-in-out infinite; }
+
+        /* 顶部栏 */
+        .topbar {
+            background: rgba(11,14,23,0.7);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+
+        /* Logo 渐变文字 */
+        .logo-text {
+            background: linear-gradient(135deg, #00f2fe, #a855f7);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        /* 进度连接线 */
+        .progress-connector { height: 2px; flex: 1; min-width: 12px; }
+        .connector-done { background: #22c55e; }
+        .connector-active { background: linear-gradient(90deg, #22c55e, #eab308); }
+        .connector-pending { background: rgba(255,255,255,0.06); }
+
+        /* 滚动条 */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+    </style>
+    {% block extra_head %}{% endblock %}
+</head>
+<body class="flex h-screen overflow-hidden relative">
+
+    <!-- 侧边栏 -->
+    <aside class="sidebar w-56 flex flex-col shrink-0 z-10">
+        <!-- Logo -->
+        <div class="px-4 py-5 border-b border-white/5">
+            <a href="/" class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-lg bg-gradient-brand flex items-center justify-center text-sm">📝</div>
+                <div>
+                    <span class="text-lg font-bold logo-text">ContentPipe</span>
+                    <p class="text-[10px] text-slate-500 -mt-0.5">AI 图文创作工作流</p>
+                </div>
+            </a>
+        </div>
+
+        <!-- 导航 -->
+        <nav class="flex-1 p-3 space-y-1">
+            <a href="/"
+               class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm
+                      {% if page == 'dashboard' %}nav-active{% else %}text-slate-400{% endif %}">
+                <span class="text-base">📊</span> <span class="font-medium">总览</span>
+            </a>
+            <a href="/runs"
+               class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm
+                      {% if page == 'runs' %}nav-active{% else %}text-slate-400{% endif %}">
+                <span class="text-base">📋</span> <span class="font-medium">Runs</span>
+            </a>
+            <a href="/settings"
+               class="nav-item flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm
+                      {% if page == 'settings' %}nav-active{% else %}text-slate-400{% endif %}">
+                <span class="text-base">⚙️</span> <span class="font-medium">设置</span>
+            </a>
+        </nav>
+
+        <!-- 最近 Run -->
+        <div class="p-3 border-t border-white/5" id="sidebar-recent"
+             hx-get="/api/runs/sidebar" hx-trigger="load" hx-target="#sidebar-recent-list">
+            <p class="px-2 py-1 text-[10px] text-slate-500 uppercase tracking-widest font-semibold">最近运行</p>
+            <div id="sidebar-recent-list" class="space-y-0.5 mt-1.5 max-h-48 overflow-y-auto">
+            </div>
+        </div>
+
+        <!-- 底部版本 -->
+        <div class="px-4 py-3 border-t border-white/5">
+            <p class="text-[10px] text-slate-600">ContentPipe v0.4.0</p>
+        </div>
+    </aside>
+
+    <!-- 主内容区 -->
+    <main class="flex-1 overflow-y-auto z-10">
+        <!-- 顶部栏 -->
+        <header class="topbar sticky top-0 z-20 px-6 py-3.5 flex items-center justify-between">
+            <h1 class="text-lg font-semibold text-white/90">{% block header %}ContentPipe{% endblock %}</h1>
+            <div class="flex items-center gap-3">
+                {% block header_actions %}
+                <a href="/runs/new"
+                   class="btn-primary px-4 py-2 text-sm inline-flex items-center gap-1.5">
+                    <span>+</span> 新建 Run
+                </a>
+                {% endblock %}
+            </div>
+        </header>
+
+        <!-- 页面内容 -->
+        <div class="p-6" id="main-content">
+            {% block content %}{% endblock %}
+        </div>
+    </main>
+
+    {% block extra_scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,168 @@
+{% extends "base.html" %}
+
+{% block title %}ContentPipe — 总览{% endblock %}
+{% block header %}总览{% endblock %}
+
+{% block content %}
+<!-- 统计卡片 -->
+<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+    <div class="stat-card card p-5 rounded-xl">
+        <p class="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">总 Runs</p>
+        <p class="text-3xl font-bold text-white mt-2">{{ stats.total }}</p>
+    </div>
+    <div class="stat-card card p-5 rounded-xl">
+        <p class="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">运行中</p>
+        <p class="text-3xl font-bold mt-2 logo-text">{{ stats.running }}</p>
+    </div>
+    <div class="stat-card card p-5 rounded-xl">
+        <p class="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">待审核</p>
+        <p class="text-3xl font-bold text-amber-400 mt-2">{{ stats.review }}</p>
+    </div>
+    <div class="stat-card card p-5 rounded-xl">
+        <p class="text-[10px] text-slate-500 uppercase tracking-widest font-semibold">已完成</p>
+        <p class="text-3xl font-bold text-emerald-400 mt-2">{{ stats.completed }}</p>
+    </div>
+</div>
+
+<!-- 待审核 -->
+{% if stats.pending_reviews %}
+<div class="card p-5 mb-8 border-amber-500/10">
+    <h2 class="text-xs font-semibold text-amber-400 uppercase tracking-widest mb-4">⏸ 待处理</h2>
+    <div class="space-y-3">
+        {% for run in stats.pending_reviews %}
+        <div class="flex items-center justify-between p-4 rounded-xl bg-amber-500/5 border border-amber-500/10">
+            <div>
+                <p class="text-white font-medium">
+                    <span class="text-amber-400">⏸</span>
+                    {{ run._title }}
+                </p>
+                <p class="text-xs text-slate-500 mt-1">
+                    阶段: {{ run.current_stage }} · {{ run.run_id }}
+                </p>
+            </div>
+            <a href="/runs/{{ run.run_id }}/review"
+               class="btn-warn px-4 py-2 text-sm">
+                去审核 →
+            </a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- 最近运行 -->
+<div class="card p-5">
+    <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-4">📋 最近运行</h2>
+    {% if stats.recent_runs %}
+    <div class="overflow-x-auto">
+        <table class="w-full data-table">
+            <thead>
+                <tr>
+                    <th class="text-left">Run ID</th>
+                    <th class="text-left">标题</th>
+                    <th class="text-left">状态</th>
+                    <th class="text-left">阶段</th>
+                    <th class="text-left">平台</th>
+                    <th class="text-left">进度</th>
+                    <th class="text-right">操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for run in stats.recent_runs %}
+                <tr>
+                    <td class="font-mono text-xs text-slate-500">{{ run.run_id[-12:] }}</td>
+                    <td class="text-white font-medium text-sm">{{ run._title[:30] }}</td>
+                    <td>
+                        {% if run.status == 'completed' %}
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">✅ 完成</span>
+                        {% elif run.status == 'running' %}
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 pulse-dot">🔵 运行中</span>
+                        {% elif run.status == 'review' %}
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-500/10 text-amber-400 border border-amber-500/20">⏸ 待审核</span>
+                        {% elif run.status == 'failed' %}
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-red-500/10 text-red-400 border border-red-500/20">❌ 失败</span>
+                        {% elif run.status == 'cancelled' %}
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-slate-500/10 text-slate-400 border border-slate-500/20">🚫 已取消</span>
+                        {% else %}
+                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-slate-500/10 text-slate-400 border border-slate-500/20">⏳ {{ run.status }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-slate-500 text-xs">{{ run.current_stage or '-' }}</td>
+                    <td class="text-slate-500 text-xs">{{ run.platform or '-' }}</td>
+                    <td>
+                        <div class="progress-bar w-20 h-1.5">
+                            <div class="progress-fill h-1.5" style="width: {{ run._progress }}%"></div>
+                        </div>
+                    </td>
+                    <td class="text-right whitespace-nowrap">
+                        <a href="/runs/{{ run.run_id }}" class="btn-secondary px-2.5 py-1 text-xs inline-block">查看</a>
+                        {% if run.status in ['running', 'review', 'pending'] %}
+                        <button onclick="doAction('/api/runs/{{ run.run_id }}/cancel', '确定暂停此 Run？')"
+                                class="btn-warn px-2.5 py-1 text-xs ml-1.5" title="暂停">⏸ 暂停</button>
+                        {% endif %}
+                        {% if run.status not in ['running'] %}
+                        <button onclick="doAction('/api/runs/{{ run.run_id }}/delete', '确定删除此 Run？此操作不可恢复。')"
+                                class="btn-danger px-2.5 py-1 text-xs ml-1.5" title="删除">🗑 删除</button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="text-slate-600 text-center py-12">暂无运行记录。点击右上角「新建 Run」开始。</p>
+    {% endif %}
+</div>
+
+<div id="toast" class="fixed top-4 right-4 z-50 hidden px-4 py-2 rounded-lg text-sm font-medium shadow-lg transition-all"></div>
+<div id="modal-overlay" class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm hidden items-center justify-center" onclick="if(event.target===this)closeModal()">
+    <div class="card p-6 max-w-sm mx-auto">
+        <p id="modal-msg" class="text-white mb-4"></p>
+        <div class="flex justify-end gap-3">
+            <button onclick="closeModal()" class="btn-secondary px-4 py-2 text-sm">取消</button>
+            <button id="modal-confirm" class="btn-danger px-4 py-2 text-sm">确认</button>
+        </div>
+    </div>
+</div>
+<script>
+let _pendingUrl = '';
+function showModal(url, msg) {
+    _pendingUrl = url;
+    document.getElementById('modal-msg').textContent = msg;
+    const overlay = document.getElementById('modal-overlay');
+    overlay.classList.remove('hidden');
+    overlay.classList.add('flex');
+}
+function closeModal() {
+    const overlay = document.getElementById('modal-overlay');
+    overlay.classList.add('hidden');
+    overlay.classList.remove('flex');
+    _pendingUrl = '';
+}
+document.getElementById('modal-confirm').onclick = async () => {
+    if (!_pendingUrl) return;
+    const url = _pendingUrl;
+    closeModal();
+    showToast('⏳ 处理中...', 'bg-blue-600');
+    try {
+        const r = await fetch(url, { method: 'POST' });
+        if (r.ok) {
+            showToast('✅ 操作成功', 'bg-emerald-600');
+            setTimeout(() => window.location.reload(), 500);
+        } else {
+            showToast('❌ 失败: ' + r.status, 'bg-red-600');
+        }
+    } catch(e) {
+        showToast('❌ 网络错误', 'bg-red-600');
+    }
+};
+function showToast(text, cls) {
+    const t = document.getElementById('toast');
+    t.textContent = text;
+    t.className = 'fixed top-4 right-4 z-50 px-4 py-2 rounded-lg text-sm font-medium shadow-lg ' + cls;
+    setTimeout(() => t.classList.add('hidden'), 2500);
+}
+function doAction(url, msg) { showModal(url, msg); }
+</script>
+{% endblock %}

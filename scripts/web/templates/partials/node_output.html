@@ -1,0 +1,45 @@
+<!-- 节点输出详情（HTMX 局部加载） -->
+<div class="bg-slate-800/50 rounded-lg p-4 mt-2 text-sm border border-slate-700/50">
+
+    {% if output.get('error') %}
+        <p class="text-red-400">{{ output.error }}</p>
+
+    {% elif output.get('_type') == 'cards' %}
+        <div class="space-y-3">
+            {% for item in output.get('items', []) %}
+            <div>
+                <div class="text-xs text-slate-500 mb-1">{{ item.label }}</div>
+                <div class="text-slate-200 whitespace-pre-wrap leading-relaxed">{{ item.value }}</div>
+            </div>
+            {% if not loop.last %}
+            <div class="border-b border-slate-700/30"></div>
+            {% endif %}
+            {% endfor %}
+        </div>
+
+    {% else %}
+        {# fallback: key-value 列表 #}
+        <div class="space-y-2">
+            {% for key, value in output.items() %}
+                {% if key != '_type' %}
+                <div>
+                    <span class="text-xs text-slate-500">{{ key }}</span>
+                    <div class="text-slate-300 mt-0.5">
+                        {% if value is string and value | length > 300 %}
+                            <details>
+                                <summary class="cursor-pointer text-sky-400 hover:text-sky-300 text-xs">{{ value[:120] }}… (展开)</summary>
+                                <div class="mt-1 whitespace-pre-wrap">{{ value }}</div>
+                            </details>
+                        {% elif value is string %}
+                            {{ value }}
+                        {% else %}
+                            <pre class="text-xs bg-slate-900 p-2 rounded overflow-x-auto">{{ value | tojson(indent=2) }}</pre>
+                        {% endif %}
+                    </div>
+                </div>
+                {% endif %}
+            {% endfor %}
+        </div>
+    {% endif %}
+
+</div>

@@ -1,0 +1,202 @@
+task_id: topic_2026_03_10_001
+agent: scout
+version: "1.0"
+
+role_definition:
+  role: "trend_scan_brainstorm_direction_lock"
+  responsibility: "扫描热点、结合用户要求与参考材料锁定唯一写作方向，并将待核查事实与研究任务交给 Researcher"
+
+user_request:
+  raw_request: "用户原始输入文本"
+  clarified_goal: "基于热点、用户要求和参考文章，确定唯一写作方向，并为 Researcher 和 Writer 提供结构化输入"
+
+user_requirements:
+  platform: "小红书"
+  content_type: "图文笔记"
+  audience: "目标读者画像"
+  tone: "真实、有活人感、吸引力强"
+  length_preference: "中等"
+  required_keywords:
+    - "关键词A"
+    - "关键词B"
+  preferred_keywords:
+    - "关键词C"
+  negative_keywords:
+    - "避免词A"
+  hard_constraints:
+    - "涉及关键事实必须核查"
+    - "重点内容必须体现在成稿中"
+    - "不能编数据"
+  soft_preferences:
+    - "更像真实分享"
+    - "避免太官方"
+    - "要有传播潜力"
+
+reference_articles:
+  - ref_id: RA001
+    title: "用户指定参考文章1"
+    url: "https://example.com/article-1"
+    provided_by: "user"
+    purpose: "希望写相似内容"
+    similarity_requirements:
+      topic_similarity: high
+      structure_similarity: medium
+      tone_similarity: high
+      hook_similarity: medium
+      information_density: medium
+    extraction_focus:
+      - "开头钩子"
+      - "段落组织"
+      - "语气风格"
+    do_not_copy:
+      - "具体句式"
+      - "原文案例"
+      - "原文数据"
+
+scout_process_summary:
+  trend_scan_summary:
+    - "扫描到与该方向相关的热点信号A"
+    - "用户要求与该方向高度一致"
+  brainstorming_summary:
+    - "用户更偏向实用型表达"
+    - "希望有明确立场"
+  elimination_note: "Scout 已完成内部发散和筛选，以下为唯一锁定方向"
+
+topic:
+  topic_id: T001
+  title: "最终锁定的话题"
+  summary: "这篇内容准备围绕什么来写"
+  why_this_topic:
+    - "最符合用户指定关键词"
+    - "与参考文章形态最接近"
+    - "具备传播潜力"
+    - "可形成清晰结构"
+  content_angle: "从具体痛点/趋势切入"
+  proposed_thesis: "文章最终想表达的核心结论"
+  target_output_shape: "分析型/观点型/攻略型"
+  direction_references:
+    - ref_id: DR001
+      title: "支撑该方向的重要参考1"
+      url: "https://example.com/direction-ref-1"
+      role: "direction_reference"
+    - ref_id: DR002
+      title: "支撑该方向的重要参考2"
+      url: "https://example.com/direction-ref-2"
+      role: "direction_reference"
+
+writer_brief:
+  target_output: "一篇可直接发布的内容"
+  core_message: "Writer 必须讲清楚的核心信息"
+  must_cover:
+    - "重点内容1"
+    - "重点内容2"
+    - "重点内容3"
+  preferred_structure:
+    - "开头：热点/痛点钩子"
+    - "中段：分析与展开"
+    - "结尾：判断/建议/互动引导"
+  style_guidance:
+    based_on_reference_articles:
+      - "RA001"
+    imitate_dimensions:
+      - "语气"
+      - "节奏"
+      - "结构组织"
+    avoid:
+      - "照抄原文表达"
+      - "复用原文案例"
+      - "未经核查引用原文数据"
+
+handoff_to_researcher:
+  verification_targets:
+    - claim_id: C001
+      claim_text: "关键事实1"
+      priority: high
+      why_needed: "直接影响文章主结论"
+      related_reference_urls:
+        - "https://example.com/source-1"
+
+    - claim_id: C002
+      claim_text: "关键事实2"
+      priority: high
+      why_needed: "属于强断言"
+      related_reference_urls:
+        - "https://example.com/source-2"
+
+  research_questions:
+    - rq_id: RQ001
+      question: "该方向下当前最值得引用的背景信息是什么？"
+      priority: high
+      seed_urls:
+        - "https://example.com/direction-ref-1"
+
+    - rq_id: RQ002
+      question: "有哪些可支撑写作的数据、案例、定义？"
+      priority: high
+      seed_urls:
+        - "https://example.com/direction-ref-2"
+
+    - rq_id: RQ003
+      question: "围绕该方向还有哪些值得探索的延展角度？"
+      priority: medium
+      seed_urls:
+        - "https://example.com/source-3"
+
+  risk_flags:
+    - "避免把社区传闻写成事实"
+    - "避免绝对化结论"
+    - "避免未经验证的数据和排名"
+
+  research_reference_pool:
+    - link_id: RL001
+      title: "待深查链接1"
+      url: "https://example.com/research-seed-1"
+      source_type: "media"
+      role: "research_seed"
+      credibility_status: "unknown"
+
+    - link_id: RL002
+      title: "待深查链接2"
+      url: "https://example.com/research-seed-2"
+      source_type: "community"
+      role: "research_seed"
+      credibility_status: "unknown"
+
+reference_index:
+  all_links:
+    - link_id: L001
+      title: "用户参考文章1"
+      url: "https://example.com/article-1"
+      category: "user_reference"
+    - link_id: L002
+      title: "热点来源1"
+      url: "https://example.com/source-1"
+      category: "trend_signal"
+    - link_id: L003
+      title: "方向依据1"
+      url: "https://example.com/direction-ref-1"
+      category: "direction_reference"
+    - link_id: L004
+      title: "研究种子链接1"
+      url: "https://example.com/research-seed-1"
+      category: "research_seed"
+
+link_usage_policy:
+  user_reference:
+    usage: "用于理解用户想要的风格和方向"
+    not_for: "不可直接作为事实证据"
+  trend_signal:
+    usage: "用于判断热点和话题价值"
+    not_for: "未经核查不可直接写入正文为事实"
+  direction_reference:
+    usage: "用于说明为什么选择这个方向"
+    not_for: "未经核查不可直接写为定论"
+  research_seed:
+    usage: "供 Researcher 深挖扩展"
+    not_for: "不可直接进入正文"
+
+status:
+  topic_locked: true
+  only_one_topic: true
+  ready_for_research: true
+  ready_for_writer_brief: true

@@ -1,0 +1,611 @@
+{% extends "base.html" %}
+
+{% block title %}ContentPipe — {{ node_info.icon }} {{ node_info.label }}{% endblock %}
+{% block header %}
+    <div class="flex items-center gap-3">
+        <a href="/runs/{{ run.run_id }}" class="text-slate-400 hover:text-white">← 返回</a>
+        <span>{{ node_info.icon }} {{ node_info.label }}</span>
+        <span class="text-xs text-slate-500 bg-slate-700 px-2 py-0.5 rounded">{{ stage }}</span>
+    </div>
+{% endblock %}
+{% block header_actions %}{% endblock %}
+
+{% block extra_head %}
+<style>
+    .chat-box { overflow-y: auto; scroll-behavior: smooth; }
+    .chat-msg { max-width: 85%; word-break: break-word; }
+    .chat-user { margin-left: auto; background: #1e40af; }
+    .chat-ai { margin-right: auto; background: #334155; }
+    .typing-dot { animation: blink 1.4s infinite both; }
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes blink { 0%, 80%, 100% { opacity: 0; } 40% { opacity: 1; } }
+    /* 右栏 sticky：聊天窗口固定在视口，左栏自由滚动 */
+    .sticky-chat-col {
+        position: sticky;
+        top: 1rem;
+        align-self: start;
+        max-height: calc(100vh - 6rem);
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+    }
+    .sticky-chat-col .chat-box {
+        flex: 1;
+        min-height: 200px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+    <!-- ═══ 左栏：节点输出 + 上下文 ═══ -->
+    <div class="space-y-4">
+        <!-- 节点输出卡片（摘要） -->
+        <div class="card p-4" id="node-output-cards">
+            <h3 class="text-xs text-slate-500 uppercase mb-3">{{ node_info.icon }} {{ node_info.label }} 输出</h3>
+            {% if node_output.get('_type') == 'cards' %}
+                <div class="space-y-3">
+                    {% for item in node_output.get('items', []) %}
+                    <div>
+                        <div class="text-xs text-slate-500 mb-1">{{ item.label }}</div>
+                        <div class="text-sm text-slate-200 whitespace-pre-wrap leading-relaxed">{{ item.value }}</div>
+                    </div>
+                    {% if not loop.last %}<div class="border-b border-slate-700/30"></div>{% endif %}
+                    {% endfor %}
+                </div>
+            {% else %}
+                <div class="space-y-2">
+                    {% for key, value in node_output.items() %}
+                        {% if key not in ('_type', 'error') %}
+                        <div>
+                            <span class="text-xs text-slate-500">{{ key }}</span>
+                            <div class="text-sm text-slate-300 mt-0.5 whitespace-pre-wrap">
+                                {% if value is string %}{{ value[:500] }}{% else %}{{ value }}{% endif %}
+                            </div>
+                        </div>
+                        {% endif %}
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+
+        <!-- ═══ 上下文面板（按节点类型） ═══ -->
+
+        {# Scout: 方向参考链接（新 schema: direction_references / 旧 schema: sources） #}
+        {% set scout_refs = run.topic.direction_references | default(run.topic.sources | default([])) if run.topic is defined and run.topic is mapping else [] %}
+        {% if stage == 'scout' and scout_refs %}
+        <div class="card p-4">
+            <h3 class="text-xs text-slate-500 uppercase mb-2">📊 方向参考</h3>
+            <div class="space-y-2">
+                {% for src in scout_refs %}
+                <div class="flex items-start gap-2 text-sm">
+                    <span class="text-xs text-slate-500 shrink-0 bg-slate-700 px-1.5 py-0.5 rounded">{{ src.role | default(src.platform | default('ref')) }}</span>
+                    <a href="{{ src.url | default('#') }}" target="_blank" class="text-sky-400 hover:text-sky-300 text-sm">{{ src.title | default('') }}</a>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {# Scout: 参考文章分析 #}
+        {% if stage == 'scout' and run.reference_articles is defined %}
+        <div class="card p-4">
+            <h3 class="text-xs text-slate-500 uppercase mb-2">📖 参考文章</h3>
+            <div class="space-y-3">
+                {% for ra in run.reference_articles | default([]) %}
+                <div class="bg-slate-800/50 rounded p-3">
+                    <a href="{{ ra.url | default('#') }}" target="_blank" class="text-sky-400 hover:text-sky-300 text-sm font-medium">{{ ra.title | default('') }}</a>
+                    {% if ra.extraction_focus is defined %}
+                    <p class="text-xs text-slate-500 mt-1">模仿: {{ ra.extraction_focus | join(', ') }}</p>
+                    {% endif %}
+                    {% if ra.do_not_copy is defined %}
+                    <p class="text-xs text-red-400/70 mt-1">禁区: {{ ra.do_not_copy | join(', ') }}</p>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {# Researcher: 调研报告（适配新旧 schema） #}
+        {% if stage == 'researcher' and run.research is defined and run.research is mapping %}
+        <div class="card p-4">
+            <h3 class="text-xs text-slate-500 uppercase mb-2">📋 调研报告</h3>
+
+            {# 新 schema: verification_results #}
+            {% set vr = run.verification_results | default(run.research.verification_results | default([])) %}
+            {% if vr %}
+            <div class="space-y-2 mb-3">
+                <p class="text-xs text-slate-500">🔍 事实核查</p>
+                {% for v in vr[:5] %}
+                <div class="flex items-start gap-2 text-sm">
+                    {% if v.status == 'verified' %}
+                    <span class="text-green-400 shrink-0">✅</span>
+                    {% elif v.status == 'conflicted' %}
+                    <span class="text-amber-400 shrink-0">⚠️</span>
+                    {% else %}
+                    <span class="text-slate-500 shrink-0">❓</span>
+                    {% endif %}
+                    <span class="text-slate-300">{{ v.claim_text | default('') | truncate(100) }}</span>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            {# 旧 schema fallback: executive_summary + key_findings #}
+            {% if not vr %}
+            <div class="text-sm text-slate-300 leading-relaxed max-h-48 overflow-y-auto whitespace-pre-wrap">{{ (run.research.executive_summary | default(run.research.summary | default('')))[:600] }}</div>
+            {% if run.research.key_findings is defined %}
+            <div class="mt-3 border-t border-slate-700/30 pt-3">
+                <p class="text-xs text-slate-500 mb-2">💡 核心发现</p>
+                <ul class="text-sm text-slate-300 space-y-1 list-none">
+                    {% for f in run.research.key_findings | default([]) %}
+                    <li>• {% if f is string %}{{ f[:120] }}{% elif f is mapping %}{{ f.finding | default(f | string) | truncate(120) }}{% else %}{{ f | string | truncate(120) }}{% endif %}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+            {% endif %}
+
+            {# Writer Packet 预览 #}
+            {% set wp = run.writer_packet | default({}) %}
+            {% if wp and wp.forbidden_claims is defined %}
+            <div class="mt-3 border-t border-slate-700/30 pt-3">
+                <p class="text-xs text-red-400/70 mb-1">🚫 禁止写入</p>
+                <ul class="text-sm text-red-300/60 space-y-1 list-none">
+                    {% for f in wp.forbidden_claims[:3] %}
+                    <li>• {{ f | truncate(80) }}</li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {# Writer: 最终文章（润色后）+ 编辑功能 #}
+        {% if stage == 'writer' %}
+        <div class="card p-4">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="text-xs text-slate-500 uppercase">📄 文章（润色后）</h3>
+                <div class="flex gap-2">
+                    <button id="btn-edit-article" onclick="toggleEditArticle()"
+                            class="text-xs px-3 py-1 bg-sky-600 text-white rounded hover:bg-sky-500 transition">
+                        ✏️ 编辑
+                    </button>
+                    <button id="btn-save-article" onclick="saveArticle()" style="display:none"
+                            class="text-xs px-3 py-1 bg-green-600 text-white rounded hover:bg-green-500 transition">
+                        💾 保存
+                    </button>
+                    <button id="btn-cancel-edit" onclick="cancelEditArticle()" style="display:none"
+                            class="text-xs px-3 py-1 bg-slate-600 text-white rounded hover:bg-slate-500 transition">
+                        取消
+                    </button>
+                </div>
+            </div>
+            {% set final_article = run.article_edited | default(run.article.content | default('') if run.article is defined and run.article is mapping else '') %}
+            <div id="article-display" class="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">{{ final_article }}</div>
+            <textarea id="article-editor" style="display:none"
+                      class="w-full bg-slate-800 border border-slate-600 rounded-lg p-3 text-sm text-slate-200 leading-relaxed focus:border-sky-500 focus:outline-none resize-y"
+                      rows="30">{{ final_article }}</textarea>
+            <div id="save-status" class="text-xs text-green-400 mt-2" style="display:none"></div>
+        </div>
+        {% endif %}
+
+        {# Director: 配图方案（可操作面板） #}
+        {% if stage == 'director' and run.visual_plan is defined and run.visual_plan is mapping %}
+        <div class="card p-4" id="director-placements-panel">
+            <h3 class="text-xs text-slate-500 uppercase mb-2">🎨 配图方案</h3>
+            <p class="text-xs text-slate-400 mb-3">{{ run.visual_plan.style | default('') }} · {{ (run.visual_plan.global_tone | default(''))[:80] }}</p>
+            <div class="space-y-3" id="placement-list">
+                {% for p in run.visual_plan.placements | default([]) %}
+                <div class="bg-slate-800/50 rounded p-3 placement-card" data-pid="{{ p.id | default('img_' ~ '%03d' | format(loop.index)) }}">
+                    <div class="flex items-start gap-3">
+                        {# 缩略图区域 #}
+                        <div class="shrink-0 w-20 h-20 bg-slate-700 rounded overflow-hidden flex items-center justify-center">
+                            {% set pid = p.id | default('img_' ~ '%03d' | format(loop.index)) %}
+                            {% set has_img = false %}
+                            {% for img in run.generated_images | default([]) %}
+                                {% if img.placement_id == pid and img.success | default(false) %}
+                                    {% set has_img = true %}
+                                {% endif %}
+                            {% endfor %}
+                            <img src="/api/runs/{{ run.run_id }}/images/{{ pid }}.jpg"
+                                 alt="{{ pid }}" class="w-full h-full object-cover"
+                                 onerror="this.parentElement.innerHTML='<span class=\'text-slate-500 text-xs\'>⏳</span>'">
+                        </div>
+                        {# 配图信息 #}
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center justify-between mb-1">
+                                <span class="text-sky-400 text-sm font-medium">配图 {{ loop.index }}</span>
+                                <div class="flex gap-1">
+                                    <button onclick="replacePlacement('{{ pid }}')" class="text-xs text-slate-400 hover:text-sky-400 px-1.5 py-0.5 rounded bg-slate-700/50">🔄 替换</button>
+                                    <button onclick="deletePlacement('{{ pid }}')" class="text-xs text-slate-400 hover:text-red-400 px-1.5 py-0.5 rounded bg-slate-700/50">🗑️</button>
+                                </div>
+                            </div>
+                            <p class="text-xs text-green-400/80 mb-1">📍 {{ (p.after_section | default('')) | replace('## ', '') }}</p>
+                            <p class="text-xs text-slate-400 mb-1">🎯 {{ p.purpose | default('') }}</p>
+                            <p class="text-xs text-slate-500 leading-relaxed">{{ p.description | default('') | truncate(100) }}</p>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {# Formatter: 排版预览（iframe 嵌入） #}
+        {% if stage == 'formatter' %}
+        <div class="card p-4">
+            <h3 class="text-xs text-slate-500 uppercase mb-2">📱 排版预览</h3>
+            <div style="width:375px;margin:0 auto;border-radius:24px;border:2px solid #475569;padding:8px;background:#fff;max-height:70vh;overflow-y:auto;">
+                <iframe src="/api/runs/{{ run.run_id }}/preview/html" style="width:100%;min-height:500px;border:none;"></iframe>
+            </div>
+            <div class="mt-3 flex gap-2 justify-center">
+                <a href="/runs/{{ run.run_id }}/preview" target="_blank"
+                   class="text-xs text-sky-400 hover:text-sky-300">🔗 新窗口打开预览</a>
+            </div>
+        </div>
+
+        {# 生成的图片缩略图 #}
+        {% if run.generated_images is defined %}
+        <div class="card p-4">
+            <h3 class="text-xs text-slate-500 uppercase mb-2">🖼️ 已生成配图</h3>
+            <div class="grid grid-cols-2 gap-2">
+                {% for img in run.generated_images | default([]) %}
+                    {% if img.success | default(false) %}
+                    <div class="bg-slate-800/50 rounded overflow-hidden">
+                        <img src="/api/runs/{{ run.run_id }}/images/{{ img.placement_id }}.jpg"
+                             alt="{{ img.placement_id }}"
+                             class="w-full h-auto"
+                             onerror="this.style.display='none'">
+                        <div class="px-2 py-1 text-xs text-slate-400">
+                            {{ img.placement_id }} · {{ img.engine | default('?') }}
+                        </div>
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+        {% endif %}
+
+    </div>
+
+    <!-- ═══ 右栏：AI 聊天 + 操作（sticky，不跟左栏滚动）═══ -->
+    <div class="sticky-chat-col">
+        <!-- 聊天窗 -->
+        <div class="card p-4 flex flex-col flex-1 overflow-hidden">
+            <h3 class="text-xs text-slate-500 uppercase mb-3">💬 与{{ node_info.label }} AI 讨论</h3>
+
+            <div id="chat-messages" class="chat-box flex-1 space-y-3 mb-3 pr-1">
+                <div class="chat-msg chat-ai rounded-lg px-3 py-2 text-sm text-slate-200">
+                    👋 我是<strong>{{ node_info.label }}</strong>。{{ node_info.icon }}
+                    <br><br>
+                    {% if stage == 'scout' %}
+                    你可以：<br>• 让我换一个选题方向<br>• 给我一篇文章链接，写类似的<br>• 讨论选题的传播潜力<br>• 直接点「继续」用当前选题
+                    {% elif stage == 'researcher' %}
+                    你可以：<br>• 让我补充某个数据/案例<br>• 讨论信源是否可靠<br>• 指出哪些论点需要加强
+                    {% elif stage == 'writer' %}
+                    你可以：<br>• 讨论文章结构和节奏<br>• 指出仍像 AI 的部分<br>• 让我调整语气/风格<br>• 直接点左边「编辑」自己改文章
+                    {% elif stage == 'director' %}
+                    你可以：<br>• 讨论配图风格和位置<br>• 修改某张图的方向<br>• 提供你自己的图片 URL<br>• 调整整体视觉调性
+                    {% elif stage == 'formatter' %}
+                    你可以：<br>• 检查排版效果和图片位置<br>• 调整标题/段落样式<br>• 让我换一张配图<br>• 确认没问题就点「继续」发布
+                    {% else %}
+                    有什么问题随时问我。
+                    {% endif %}
+                </div>
+            </div>
+
+            {# 图片上传预览（Director 阶段） #}
+            {% if stage == 'director' %}
+            <div id="upload-preview" style="display:none" class="mb-2 flex items-center gap-2 bg-slate-800/50 rounded p-2">
+                <img id="upload-thumb" class="w-12 h-12 object-cover rounded">
+                <span id="upload-name" class="text-xs text-slate-400 flex-1 truncate"></span>
+                <button onclick="clearUpload()" class="text-xs text-red-400 hover:text-red-300">✕</button>
+            </div>
+            {% endif %}
+
+            <div class="flex gap-2">
+                {% if stage == 'director' %}
+                <label class="px-2 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition cursor-pointer shrink-0 text-sm" title="上传图片">
+                    📎
+                    <input type="file" id="image-upload" accept="image/*" style="display:none" onchange="handleImageUpload(this)">
+                </label>
+                {% endif %}
+                <input type="text" id="chat-input" placeholder="{% if stage == 'director' %}输入指令（如：用这张图替换配图2）...{% else %}输入你的想法...{% endif %}"
+                       class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none"
+                       onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendChat()}">
+                <button onclick="sendChat()"
+                        class="px-4 py-2 bg-sky-600 text-white rounded-lg hover:bg-sky-500 transition text-sm shrink-0">
+                    发送
+                </button>
+            </div>
+        </div>
+
+        <!-- 操作按钮 -->
+        {% if not is_readonly %}
+        <div class="card p-4 space-y-3">
+            <form hx-post="/api/runs/{{ run.run_id }}/review" class="w-full">
+                <input type="hidden" name="action" value="approve">
+                <button type="submit"
+                        class="w-full px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-500 transition font-medium text-base">
+                    ✅ 满意，继续下一步
+                </button>
+            </form>
+            <button onclick="rerunNode()"
+                    class="w-full px-4 py-2.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 transition text-sm">
+                🔄 按新方向重新执行
+            </button>
+        </div>
+        {% else %}
+        <div class="card p-4 text-center text-slate-500 text-sm">
+            📖 只读模式 — 查看历史输出和聊天记录
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const runId = '{{ run.run_id }}';
+const nodeId = '{{ stage }}';
+const chatBox = document.getElementById('chat-messages');
+const chatInput = document.getElementById('chat-input');
+
+(async () => {
+    try {
+        const resp = await fetch(`/api/runs/${runId}/chat/history?node=${nodeId}`);
+        const msgs = await resp.json();
+        for (const msg of msgs) appendMsg(msg.role, msg.content);
+    } catch(e) {}
+})();
+
+function appendMsg(role, content) {
+    const div = document.createElement('div');
+    div.className = `chat-msg ${role === 'user' ? 'chat-user' : 'chat-ai'} rounded-lg px-3 py-2 text-sm text-slate-200`;
+    div.innerHTML = content.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+    chatBox.appendChild(div);
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function showTyping() {
+    const div = document.createElement('div');
+    div.id = 'typing-indicator';
+    div.className = 'chat-msg chat-ai rounded-lg px-3 py-2 text-sm text-slate-400 flex gap-1';
+    div.innerHTML = '<span class="typing-dot">●</span><span class="typing-dot">●</span><span class="typing-dot">●</span>';
+    chatBox.appendChild(div);
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+function hideTyping() { document.getElementById('typing-indicator')?.remove(); }
+
+async function sendChat() {
+    const msg = chatInput.value.trim();
+    if (!msg && !pendingImageFile) return;
+    chatInput.value = '';
+
+    // 如果有附带图片，先上传
+    let imageInfo = '';
+    if (pendingImageFile) {
+        appendMsg('user', `${msg || '(附图片)'}\n📎 ${pendingImageFile.name}`);
+        showTyping();
+        const formData = new FormData();
+        formData.append('image', pendingImageFile);
+        formData.append('message', msg);
+        try {
+            const uploadResp = await fetch(`/api/runs/${runId}/images/upload`, { method: 'POST', body: formData });
+            if (uploadResp.ok) {
+                const uploadData = await uploadResp.json();
+                imageInfo = `\n[用户上传了图片: ${uploadData.filename}, 已保存到 ${uploadData.path}]`;
+            }
+        } catch(e) {}
+        clearUpload();
+    } else {
+        appendMsg('user', msg);
+        showTyping();
+    }
+
+    try {
+        const resp = await fetch(`/api/runs/${runId}/chat`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message: msg + imageInfo, node: nodeId}),
+        });
+        const data = await resp.json();
+        hideTyping();
+        appendMsg('assistant', data.content || '(无回复)');
+        // 同步后刷新左栏
+        if (data.state_updated) {
+            // 刷新输出卡片
+            const outputEl = document.getElementById('node-output-cards');
+            if (outputEl) {
+                try {
+                    const r = await fetch(`/api/runs/${runId}/nodes/${nodeId}/output`);
+                    if (r.ok) {
+                        outputEl.innerHTML = await r.text();
+                        outputEl.style.transition = 'outline 0.3s';
+                        outputEl.style.outline = '2px solid #22c55e';
+                        setTimeout(() => { outputEl.style.outline = 'none'; }, 1500);
+                    }
+                } catch(_) {}
+            }
+            // Writer: 刷新文章全文
+            const articleEl = document.getElementById('article-display');
+            if (articleEl) {
+                try {
+                    const r = await fetch(`/api/runs/${runId}/article`);
+                    if (r.ok) {
+                        const d = await r.json();
+                        articleEl.textContent = d.content || '';
+                        // 同步到编辑器
+                        const editorEl = document.getElementById('article-editor');
+                        if (editorEl) editorEl.value = d.content || '';
+                        articleEl.style.transition = 'outline 0.3s';
+                        articleEl.style.outline = '2px solid #22c55e';
+                        setTimeout(() => { articleEl.style.outline = 'none'; }, 1500);
+                    }
+                } catch(_) {}
+            }
+        }
+    } catch(e) {
+        hideTyping();
+        appendMsg('assistant', '⚠️ 请求失败');
+    }
+}
+
+// ── Director 配图操作 ──
+let pendingImageFile = null;
+
+function handleImageUpload(input) {
+    const file = input.files[0];
+    if (!file) return;
+    pendingImageFile = file;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+        document.getElementById('upload-preview').style.display = 'flex';
+        document.getElementById('upload-thumb').src = e.target.result;
+        document.getElementById('upload-name').textContent = file.name;
+    };
+    reader.readAsDataURL(file);
+}
+
+function clearUpload() {
+    pendingImageFile = null;
+    const preview = document.getElementById('upload-preview');
+    if (preview) preview.style.display = 'none';
+    const input = document.getElementById('image-upload');
+    if (input) input.value = '';
+}
+
+async function replacePlacement(pid) {
+    // 触发文件选择
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'image/*';
+    input.onchange = async () => {
+        const file = input.files[0];
+        if (!file) return;
+        await uploadAndReplace(pid, file);
+    };
+    input.click();
+}
+
+async function uploadAndReplace(pid, file) {
+    const formData = new FormData();
+    formData.append('image', file);
+    formData.append('placement_id', pid);
+    try {
+        const resp = await fetch(`/api/runs/${runId}/images/upload`, {
+            method: 'POST',
+            body: formData,
+        });
+        if (resp.ok) {
+            appendMsg('assistant', `✅ 配图 ${pid} 已替换`);
+            refreshPlacements();
+        } else {
+            appendMsg('assistant', `❌ 替换失败: ${(await resp.json()).detail || '未知错误'}`);
+        }
+    } catch(e) {
+        appendMsg('assistant', '❌ 上传失败');
+    }
+}
+
+async function deletePlacement(pid) {
+    if (!confirm(`确定删除配图 ${pid}？`)) return;
+    try {
+        const resp = await fetch(`/api/runs/${runId}/placements/${pid}`, {
+            method: 'DELETE',
+        });
+        if (resp.ok) {
+            // 从 DOM 中移除
+            const card = document.querySelector(`.placement-card[data-pid="${pid}"]`);
+            if (card) card.remove();
+            appendMsg('assistant', `🗑️ 配图 ${pid} 已删除`);
+        }
+    } catch(e) {
+        appendMsg('assistant', '❌ 删除失败');
+    }
+}
+
+async function refreshPlacements() {
+    // 刷新左栏配图面板
+    const panel = document.getElementById('director-placements-panel');
+    if (panel) {
+        try {
+            // 重新加载整个页面（简单方案）
+            window.location.reload();
+        } catch(_) {}
+    }
+}
+
+// ── 发送聊天时检查是否有附带图片 ──
+const _originalSendChat = typeof sendChat === 'function' ? sendChat : null;
+
+// ── 文章编辑功能 ──
+function toggleEditArticle() {
+    document.getElementById('article-display').style.display = 'none';
+    document.getElementById('article-editor').style.display = 'block';
+    document.getElementById('btn-edit-article').style.display = 'none';
+    document.getElementById('btn-save-article').style.display = 'inline-block';
+    document.getElementById('btn-cancel-edit').style.display = 'inline-block';
+    document.getElementById('save-status').style.display = 'none';
+}
+
+function cancelEditArticle() {
+    document.getElementById('article-display').style.display = 'block';
+    document.getElementById('article-editor').style.display = 'none';
+    document.getElementById('btn-edit-article').style.display = 'inline-block';
+    document.getElementById('btn-save-article').style.display = 'none';
+    document.getElementById('btn-cancel-edit').style.display = 'none';
+    // 恢复原文
+    document.getElementById('article-editor').value = document.getElementById('article-display').textContent;
+}
+
+async function saveArticle() {
+    const content = document.getElementById('article-editor').value;
+    const statusEl = document.getElementById('save-status');
+    try {
+        const resp = await fetch(`/api/runs/${runId}/article`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({content: content}),
+        });
+        if (resp.ok) {
+            document.getElementById('article-display').textContent = content;
+            cancelEditArticle();
+            statusEl.textContent = '✅ 已保存';
+            statusEl.style.display = 'block';
+            setTimeout(() => statusEl.style.display = 'none', 3000);
+        } else {
+            statusEl.textContent = '❌ 保存失败';
+            statusEl.style.display = 'block';
+        }
+    } catch(e) {
+        statusEl.textContent = '❌ 网络错误';
+        statusEl.style.display = 'block';
+    }
+}
+
+async function rerunNode() {
+    const msgs = chatBox.querySelectorAll('.chat-user');
+    let direction = '';
+    if (msgs.length > 0) direction = msgs[msgs.length - 1].textContent.trim();
+    if (!confirm(`重新执行「{{ node_info.label }}」？\n\n方向: ${direction || '(保持原方向)'}`)) return;
+    try {
+        await fetch(`/api/runs/${runId}/nodes/${nodeId}/rerun`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({direction: direction}),
+        });
+        appendMsg('assistant', '🔄 正在重新执行…请稍候');
+        setTimeout(() => window.location.reload(), 5000);
+    } catch(e) {
+        appendMsg('assistant', '⚠️ 重跑失败');
+    }
+}
+</script>
+{% endblock %}

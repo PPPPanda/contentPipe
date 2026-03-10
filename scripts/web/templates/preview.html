@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+
+{% block title %}ContentPipe — 文章预览{% endblock %}
+{% block header %}
+    <div class="flex items-center gap-3">
+        <a href="/runs/{{ run.run_id }}" class="text-slate-400 hover:text-white">← 返回</a>
+        <span>文章预览</span>
+    </div>
+{% endblock %}
+
+{% block header_actions %}
+    {% if run.status == 'review' and run.current_stage == 'final_review' %}
+    <form hx-post="/api/runs/{{ run.run_id }}/review" class="flex gap-2">
+        <button type="submit" name="action" value="approve"
+                class="px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-500 transition">
+            ✅ 确认发布到草稿箱
+        </button>
+        <button type="submit" name="action" value="revise"
+                class="px-3 py-1.5 bg-slate-600 text-white text-sm rounded-lg hover:bg-slate-500 transition">
+            ✏️ 返回修改
+        </button>
+    </form>
+    {% endif %}
+{% endblock %}
+
+{% block extra_head %}
+<style>
+    .phone-frame {
+        width: 414px;
+        height: 896px;  /* iPhone XR 比例 */
+        border: 3px solid #475569;
+        border-radius: 40px;
+        padding: 48px 16px 32px;
+        background: white;
+        margin: 0 auto;
+        position: relative;
+        overflow: hidden;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+    .phone-frame::before {
+        content: '';
+        position: absolute;
+        top: 12px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 120px;
+        height: 24px;
+        background: #1e293b;
+        border-radius: 12px;
+    }
+    .phone-frame iframe {
+        width: 100%;
+        height: 100%;
+        border: none;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+    }
+    .desktop-frame {
+        max-width: 720px;
+        max-height: 85vh;
+        overflow-y: auto;
+        border: 1px solid #334155;
+        border-radius: 8px;
+        padding: 24px;
+        background: white;
+        margin: 0 auto;
+    }
+    .desktop-frame iframe {
+        width: 100%;
+        min-height: 800px;
+        border: none;
+    }
+    .html-frame {
+        max-width: 800px;
+        max-height: 85vh;
+        overflow: auto;
+        margin: 0 auto;
+        background: #1e293b;
+        border-radius: 8px;
+        padding: 16px;
+    }
+    .html-frame pre {
+        font-size: 12px;
+        color: #94a3b8;
+        white-space: pre-wrap;
+        word-break: break-all;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- 视图切换 -->
+<div class="flex items-center justify-center gap-4 mb-6">
+    <button onclick="switchView('phone')" id="btn-phone"
+            class="px-3 py-1.5 bg-sky-600 text-white text-sm rounded-lg">
+        📱 手机
+    </button>
+    <button onclick="switchView('desktop')" id="btn-desktop"
+            class="px-3 py-1.5 bg-slate-700 text-slate-300 text-sm rounded-lg hover:bg-slate-600">
+        💻 电脑
+    </button>
+    <button onclick="switchView('html')" id="btn-html"
+            class="px-3 py-1.5 bg-slate-700 text-slate-300 text-sm rounded-lg hover:bg-slate-600">
+        🔧 HTML
+    </button>
+    <button onclick="copyHtml()"
+            class="px-3 py-1.5 bg-slate-700 text-slate-300 text-sm rounded-lg hover:bg-slate-600">
+        📋 复制 HTML
+    </button>
+</div>
+
+<!-- 预览容器 -->
+<div id="preview-container" class="flex justify-center">
+    <!-- 手机视图 -->
+    <div id="view-phone" class="phone-frame">
+        <iframe id="iframe-phone" src="/api/runs/{{ run.run_id }}/preview/html"></iframe>
+    </div>
+    <!-- 电脑视图 -->
+    <div id="view-desktop" class="desktop-frame" style="display:none;">
+        <iframe id="iframe-desktop" src="/api/runs/{{ run.run_id }}/preview/html"></iframe>
+    </div>
+    <!-- HTML 源码视图 -->
+    <div id="view-html" class="html-frame" style="display:none;">
+        <pre id="html-source">加载中...</pre>
+    </div>
+</div>
+
+<script>
+    const views = ['phone', 'desktop', 'html'];
+    let htmlLoaded = false;
+
+    function switchView(mode) {
+        views.forEach(v => {
+            document.getElementById('view-' + v).style.display = (v === mode) ? '' : 'none';
+            const btn = document.getElementById('btn-' + v);
+            if (btn) {
+                btn.className = v === mode
+                    ? 'px-3 py-1.5 bg-sky-600 text-white text-sm rounded-lg'
+                    : 'px-3 py-1.5 bg-slate-700 text-slate-300 text-sm rounded-lg hover:bg-slate-600';
+            }
+        });
+        if (mode === 'html' && !htmlLoaded) {
+            fetch('/api/runs/{{ run.run_id }}/preview/html')
+                .then(r => r.text())
+                .then(html => {
+                    document.getElementById('html-source').textContent = html;
+                    htmlLoaded = true;
+                });
+        }
+    }
+
+    async function copyHtml() {
+        const resp = await fetch('/api/runs/{{ run.run_id }}/preview/html');
+        const html = await resp.text();
+        navigator.clipboard.writeText(html).then(() => {
+            alert('HTML 已复制到剪贴板');
+        });
+    }
+</script>
+{% endblock %}

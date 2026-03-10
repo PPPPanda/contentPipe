@@ -1,0 +1,35 @@
+<!--
+  WeChat 公众号基础模板
+  ⚠️ 微信排版限制：
+  - 禁止 position: absolute（保留 relative）
+  - 禁止 <link>/<style> 外部引用
+  - 禁止 background: url() 图片背景
+  - 暗色模式会自动加 js_darkmode__，背景色会失效
+  - !important 无法阻止暗色模式
+  - <svg> 的 id 会被移除，导致动画失效
+  - 所有样式必须内联
+  - 建议宽度 100%，最大 574px（公众号阅读区）
+-->
+
+<section style="max-width:574px;margin:0 auto;padding:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;font-size:16px;line-height:1.8;color:#333;">
+
+  <!-- 标题区 -->
+  <section style="text-align:center;margin-bottom:24px;">
+    <h1 style="font-size:22px;font-weight:700;color:#1a1a1a;margin:0 0 8px 0;line-height:1.4;">{{title}}</h1>
+    <p style="font-size:13px;color:#999;margin:0;">{{author}} · {{date}}</p>
+  </section>
+
+  <!-- 导语区 -->
+  <section style="background:#f7f7f7;border-left:4px solid {{accent_color|default('#07c160')}};padding:12px 16px;margin-bottom:24px;border-radius:0 4px 4px 0;">
+    <p style="font-size:15px;color:#666;margin:0;line-height:1.6;">{{lead}}</p>
+  </section>
+
+  <!-- 正文区（由 Writer 生成的 HTML 填入） -->
+  {{content}}
+
+  <!-- 尾部区 -->
+  <section style="margin-top:32px;padding-top:16px;border-top:1px solid #eee;text-align:center;">
+    <p style="font-size:13px;color:#999;margin:0;">— END —</p>
+  </section>
+
+</section>

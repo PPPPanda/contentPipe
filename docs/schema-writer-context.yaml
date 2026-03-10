@@ -1,0 +1,115 @@
+# Writer Context Schema — 写作上下文包
+# 由系统自动从 Scout 和 Researcher 输出中组装
+# Writer 消费这一份文件即可，不需要直接读 Scout/Researcher 的原始 YAML
+
+task_id: topic_2026_03_10_001
+
+# ── 立题层（写什么）──
+topic:
+  title: "最终锁定的话题"
+  summary: "这篇内容准备围绕什么来写"
+  content_angle: "从具体痛点/趋势切入"
+  proposed_thesis: "文章最终想表达的核心结论"
+  why_this_topic:
+    - "最符合用户指定关键词"
+    - "具备传播潜力"
+
+audience_and_style:
+  platform: "小红书"
+  audience: "目标读者画像"
+  tone: "真实、有活人感、吸引力强"
+
+user_constraints:
+  required_keywords:
+    - "关键词A"
+    - "关键词B"
+  negative_keywords:
+    - "避免词A"
+  hard_constraints:
+    - "关键事实必须核查"
+    - "不能编数据"
+
+reference_articles:
+  - ref_id: RA001
+    title: "参考文章1"
+    imitate_dimensions:
+      - "语气"
+      - "结构"
+      - "钩子"
+    do_not_copy:
+      - "具体句式"
+      - "原文案例"
+
+# ── 执行层（怎么写）──
+writer_brief:
+  core_message: "Writer 必须讲清楚的核心信息"
+  must_cover:
+    - "重点内容1"
+    - "重点内容2"
+    - "重点内容3"
+  preferred_structure:
+    - "开头：热点/痛点钩子"
+    - "中段：分析与展开"
+    - "结尾：判断/建议/互动引导"
+  style_guidance:
+    based_on_reference_articles:
+      - "RA001"
+    imitate_dimensions:
+      - "语气"
+      - "节奏"
+    avoid:
+      - "照抄原文表达"
+      - "复用原文案例"
+
+# ── 证据材料层（用什么写）──
+writer_packet:
+  safe_facts:
+    - item: "可以直接写成事实的内容1"
+      source_ids: ["S001", "S002"]
+  cautious_points:
+    - item: "可以提但要加限定词的内容1"
+      source_ids: ["S003"]
+  useful_data:
+    - item_id: "DP001"
+      suggested_use: "适合正文论证"
+  useful_cases:
+    - item_id: "CASE001"
+      suggested_use: "适合中段展开"
+  useful_definitions:
+    - item_id: "D001"
+      suggested_use: "适合开头做背景解释"
+  promising_angles:
+    - insight_id: "I001"
+    - insight_id: "I002"
+  forbidden_claims:
+    - "不能写成事实的说法1"
+    - "不能写成确定结论的说法2"
+
+# ── 丰富层（展开材料）──
+expandable_materials:
+  definitions:
+    - term: "关键概念1"
+      definition: "有来源支撑的定义"
+      writer_value: "可用于解释背景"
+  comparisons:
+    - axis: "A vs B"
+      summary: "关键差异"
+  controversies:
+    - issue: "该话题存在争议点"
+      viewpoints:
+        - "观点1"
+        - "观点2"
+      writer_value: "可提高内容层次"
+
+promising_angles:
+  - insight: "这个话题真正值得写的不只是A，而是A背后的B"
+    type: "angle"
+    writer_usage: "适合作为正文中段分析角度"
+  - insight: "最有传播力的切口可能是具体痛点而非宏观趋势"
+    type: "framing"
+    writer_usage: "适合作为标题和开头 framing"
+
+# ── 风险提示 ──
+open_issues:
+  - description: "某关键数据只有二手来源，缺少官方交叉验证"
+    impact: "影响论证强度"

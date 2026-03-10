@@ -1,0 +1,59 @@
+<!--
+  新闻深度模板 — 简洁权威
+  适用：新闻时事/深度分析/行业报告/政策解读
+  主色：#1a1a2e (深蓝黑)  辅色：#e94560 (强调红)  背景：白底
+-->
+
+<section style="max-width:574px;margin:0 auto;padding:0;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;font-size:16px;line-height:1.8;color:#333;">
+
+  <!-- 红色顶条 -->
+  <section style="height:3px;background:#e94560;"></section>
+
+  <!-- 头部 -->
+  <section style="padding:20px 20px 16px;">
+    <section style="display:inline-block;background:#e94560;color:#fff;font-size:12px;padding:2px 10px;border-radius:2px;margin-bottom:12px;">
+      <p style="margin:0;">{{tag|default('深度')}}</p>
+    </section>
+    <h1 style="font-size:22px;font-weight:700;color:#1a1a2e;margin:8px 0;line-height:1.4;">{{title}}</h1>
+    <p style="font-size:13px;color:#999;margin:0;">{{author}} · {{date}} · 阅读约{{read_time|default('5')}}分钟</p>
+  </section>
+
+  <!-- 封面图位 -->
+  <!--
+  <section style="padding:0 20px;">
+    <img src="{{cover_url}}" style="width:100%;border-radius:4px;" />
+  </section>
+  -->
+
+  <!-- 导语 -->
+  <section style="padding:16px 20px;margin:0 20px;background:#f5f5f5;border-radius:4px;">
+    <p style="font-size:15px;color:#555;margin:0;line-height:1.6;"><strong style="color:#e94560;">导读 |</strong> {{lead}}</p>
+  </section>
+
+  <!-- 正文 -->
+  <section style="padding:20px;">
+    <!-- 正文 h2：font-size:18px;color:#1a1a2e;font-weight:700;margin:28px 0 12px;position:relative;padding-left:16px; -->
+    <!-- h2 前加红色竖线：在 h2 外层 section 加 border-left:4px solid #e94560;padding-left:12px; -->
+    <!-- 正文 p：color:#333;margin:14px 0;text-align:justify; -->
+    <!-- 引用来源：font-size:13px;color:#999;padding:8px 14px;border-left:3px solid #ddd; -->
+    <!-- 重点标记：background:#fff3cd;padding:2px 4px; -->
+    {{content}}
+  </section>
+
+  <!-- 信息来源（可选） -->
+  <!--
+  <section style="padding:12px 20px;background:#f8f8f8;margin:0 20px;">
+    <p style="font-size:12px;color:#999;margin:0;">📌 信息来源：{{sources}}</p>
+  </section>
+  -->
+
+  <!-- 尾部 -->
+  <section style="text-align:center;padding:24px 20px;margin-top:8px;">
+    <section style="height:1px;background:#eee;margin-bottom:16px;"></section>
+    <p style="font-size:12px;color:#999;margin:0;">— END —</p>
+  </section>
+
+  <!-- 红色底条 -->
+  <section style="height:3px;background:#e94560;"></section>
+
+</section>

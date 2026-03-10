@@ -1,0 +1,127 @@
+# ContentPipe — OpenClaw Plugin Manifest
+# 图文内容全自动生产线
+
+id: content-pipeline
+name: ContentPipe
+version: 0.7.0
+description: "AI 图文内容生产线：选题→调研→写作→配图→排版→发布，每步可交互审核。"
+emoji: 📝
+
+# 插件类型：managed-service（后台常驻 Python 进程 + Web UI）
+type: managed-service
+
+# 服务配置
+service:
+  runtime: python
+  command: "python3 -m uvicorn web.app:app --host 0.0.0.0 --port {port}"
+  cwd: scripts
+  port: 8765
+  health_check: "http://localhost:{port}/api/health"
+  auto_start: true
+  restart_on_failure: true
+  env:
+    PYTHONPATH: "."
+
+# Discord 集成
+discord:
+  # 通知频道（pipeline 事件推送到这里）
+  # 公开仓库默认留空；部署时通过环境变量 CONTENTPIPE_NOTIFY_CHANNEL 或本地配置注入
+  notify_channel: ""
+  
+  # 交互式按钮
+  components:
+    # 节点审核完成时发送按钮
+    review_buttons:
+      - label: "✅ 继续"
+        action: approve
+        style: success
+      - label: "🔄 重跑"
+        action: rerun
+        style: secondary
+      - label: "🛑 停止"
+        action: stop
+        style: danger
+
+# AI 工具注册（AI 可直接调用）
+tools:
+  - name: contentpipe_create
+    description: "创建新的内容生产任务"
+    parameters:
+      topic:
+        type: string
+        description: "选题或话题关键词"
+        required: true
+      platform:
+        type: string
+        description: "目标平台 (wechat/xhs)"
+        default: wechat
+      auto_approve:
+        type: boolean
+        description: "是否全自动（跳过审核）"
+        default: false
+
+  - name: contentpipe_status
+    description: "查看当前/指定 Run 的状态"
+    parameters:
+      run_id:
+        type: string
+        description: "Run ID（留空查最新）"
+        required: false
+
+  - name: contentpipe_list
+    description: "列出所有 Run"
+    parameters:
+      limit:
+        type: number
+        description: "最多返回几条"
+        default: 10
+
+  - name: contentpipe_approve
+    description: "审批通过当前节点，继续执行"
+    parameters:
+      run_id:
+        type: string
+        required: true
+      feedback:
+        type: string
+        description: "审核意见（可选）"
+        required: false
+
+  - name: contentpipe_chat
+    description: "与当前节点的 AI 角色对话"
+    parameters:
+      run_id:
+        type: string
+        required: true
+      message:
+        type: string
+        required: true
+      node:
+        type: string
+        description: "指定节点（留空用当前节点）"
+        required: false
+
+# 依赖
+dependencies:
+  python:
+    - fastapi>=0.115
+    - uvicorn>=0.34
+    - sse-starlette>=2.0
+    - python-multipart>=0.0.18
+    - jinja2>=3.1
+    - pyyaml>=6.0
+    - httpx>=0.27
+  system:
+    - python3
+
+# 配置 schema
+config:
+  default_platform: wechat
+  llm_mode: gateway
+  gateway_url: "http://localhost:18789"
+  models:
+    scout: "dashscope/qwen3.5-plus"
+    researcher: "dashscope/qwen3.5-plus"
+    writer: "openai-codex/gpt-5.4"
+    de_ai_editor: "anthropic/claude-sonnet-4-6"
+    director: "dashscope/qwen3.5-plus"

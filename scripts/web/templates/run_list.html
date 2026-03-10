@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}ContentPipe — Runs{% endblock %}
+{% block header %}所有 Runs{% endblock %}
+
+{% block content %}
+{% if runs %}
+<div class="space-y-3">
+    {% for run in runs %}
+    <div class="card card-hover block p-5 rounded-xl">
+        <div class="flex items-center justify-between">
+            <a href="/runs/{{ run.run_id }}" class="flex items-center gap-4 flex-1 min-w-0">
+                <!-- 状态图标 -->
+                <div class="text-2xl shrink-0">
+                    {% if run.status == 'completed' %}✅
+                    {% elif run.status == 'running' %}🔄
+                    {% elif run.status == 'review' %}⏸️
+                    {% elif run.status == 'failed' %}❌
+                    {% elif run.status == 'cancelled' %}🚫
+                    {% else %}⏳{% endif %}
+                </div>
+
+                <div class="min-w-0">
+                    <p class="text-white font-medium truncate">{{ run._title }}</p>
+                    <p class="text-xs text-slate-500 mt-1">
+                        {{ run.run_id }} · {{ run.platform }} · {{ run.current_stage or '未开始' }}
+                    </p>
+                </div>
+            </a>
+
+            <div class="flex items-center gap-3 shrink-0 ml-4">
+                <!-- 进度条 -->
+                <div class="progress-bar w-28 h-1.5 hidden md:block">
+                    <div class="progress-fill h-1.5" style="width: {{ run._progress }}%"></div>
+                </div>
+                <span class="text-xs text-slate-600 w-8 text-right">{{ run._progress }}%</span>
+
+                <!-- 操作按钮 -->
+                {% if run.status in ['running', 'review', 'pending'] %}
+                <button onclick="event.preventDefault(); doAction('/api/runs/{{ run.run_id }}/cancel', '确定暂停此 Run？')"
+                        class="btn-warn px-2.5 py-1.5 text-xs" title="暂停">⏸</button>
+                {% endif %}
+                {% if run.status not in ['running'] %}
+                <button onclick="event.preventDefault(); doAction('/api/runs/{{ run.run_id }}/delete', '确定删除？不可恢复。')"
+                        class="btn-danger px-2.5 py-1.5 text-xs" title="删除">🗑</button>
+                {% endif %}
+
+                <a href="/runs/{{ run.run_id }}" class="text-slate-600 hover:text-slate-400 transition">→</a>
+            </div>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-20">
+    <div class="w-16 h-16 mx-auto mb-4 rounded-2xl bg-gradient-brand flex items-center justify-center text-3xl opacity-60">📝</div>
+    <p class="text-slate-500 mb-6">还没有任何运行记录</p>
+    <a href="/runs/new" class="btn-primary px-6 py-2.5 text-sm inline-block">
+        创建第一个 Run
+    </a>
+</div>
+{% endif %}
+
+<div id="toast" class="fixed top-4 right-4 z-50 hidden px-4 py-2 rounded-lg text-sm font-medium shadow-lg transition-all"></div>
+<div id="modal-overlay" class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm hidden items-center justify-center" onclick="if(event.target===this)closeModal()">
+    <div class="card p-6 max-w-sm mx-auto">
+        <p id="modal-msg" class="text-white mb-4"></p>
+        <div class="flex justify-end gap-3">
+            <button onclick="closeModal()" class="btn-secondary px-4 py-2 text-sm">取消</button>
+            <button id="modal-confirm" class="btn-danger px-4 py-2 text-sm">确认</button>
+        </div>
+    </div>
+</div>
+<script>
+let _pendingUrl = '';
+function showModal(url, msg) {
+    _pendingUrl = url;
+    document.getElementById('modal-msg').textContent = msg;
+    const overlay = document.getElementById('modal-overlay');
+    overlay.classList.remove('hidden');
+    overlay.classList.add('flex');
+}
+function closeModal() {
+    const overlay = document.getElementById('modal-overlay');
+    overlay.classList.add('hidden');
+    overlay.classList.remove('flex');
+    _pendingUrl = '';
+}
+document.getElementById('modal-confirm').onclick = async () => {
+    if (!_pendingUrl) return;
+    const url = _pendingUrl;
+    closeModal();
+    showToast('⏳ 处理中...', 'bg-blue-600');
+    try {
+        const r = await fetch(url, { method: 'POST' });
+        if (r.ok) {
+            showToast('✅ 操作成功', 'bg-emerald-600');
+            setTimeout(() => window.location.reload(), 500);
+        } else {
+            showToast('❌ 失败: ' + r.status, 'bg-red-600');
+        }
+    } catch(e) {
+        showToast('❌ 网络错误', 'bg-red-600');
+    }
+};
+function showToast(text, cls) {
+    const t = document.getElementById('toast');
+    t.textContent = text;
+    t.className = 'fixed top-4 right-4 z-50 px-4 py-2 rounded-lg text-sm font-medium shadow-lg ' + cls;
+    setTimeout(() => t.classList.add('hidden'), 2500);
+}
+function doAction(url, msg) { showModal(url, msg); }
+</script>
+{% endblock %}

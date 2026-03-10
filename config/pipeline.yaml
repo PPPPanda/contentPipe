@@ -1,0 +1,40 @@
+# ContentPipe Pipeline 配置
+# LLM 调用模式: direct（直接调 API）或 gateway（通过 OpenClaw 代理）
+
+pipeline:
+  # 默认平台
+  default_platform: "wechat"
+
+  # LLM 调用模式: direct | gateway
+  llm_mode: "direct"
+
+  # 默认模型
+  default_llm: "dashscope/qwen3.5-plus"
+
+  # gateway 地址（llm_mode=gateway 时使用）
+  gateway_url: "http://localhost:18789"
+
+  # 各角色模型覆盖
+  llm_overrides:
+    scout: "dashscope/qwen3.5-plus"
+    researcher: "dashscope/qwen3.5-plus"
+    writer: "openai-codex/gpt-5.4"
+    de_ai_editor: "anthropic/claude-sonnet-4-6"
+    director: "dashscope/qwen3.5-plus"
+    director_refine: "dashscope/qwen3.5-plus"
+
+# Scout 配置
+scout:
+  domain_keywords:
+    - "AI"
+    - "科技"
+    - "互联网"
+    - "产品"
+    - "Agent"
+  suggestions_count: 5
+
+# 账号配置
+accounts:
+  wechat:
+    author: "ContentPipe"
+    # appid/secret 通过环境变量: WECHAT_APPID, WECHAT_SECRET

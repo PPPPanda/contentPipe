@@ -1,0 +1,239 @@
+task_id: topic_2026_03_10_001
+agent: researcher
+version: "1.0"
+
+role_definition:
+  role: "fact_verification_and_evidence_deep_dive"
+  responsibility: "核查关键事实，围绕 Scout 锁定方向深挖数据、案例、定义、争议点，并输出给 Writer 可安全使用的证据与 insight"
+
+based_on_scout:
+  chosen_topic_id: "T001"
+  chosen_topic: "方向A"
+  content_angle: "从具体痛点/趋势切入"
+  proposed_thesis: "文章最终想表达的核心结论"
+  research_scope_locked: true
+
+research_quality_rules:
+  no_fabricated_facts: true
+  no_fabricated_numbers: true
+  no_fabricated_sources: true
+  source_required_for_factual_claims: true
+  inference_must_be_labeled: true
+  insufficient_evidence_must_be_explicit: true
+
+verification_results:
+  - claim_id: C001
+    claim_text: "关键事实1"
+    status: verified
+    conclusion: "可确认该事实成立"
+    confidence: high
+    evidence_strength: strong
+    sources:
+      - source_id: S001
+        title: "来源标题1"
+        url: "https://example.com/official-1"
+        source_type: "official"
+        reliability: high
+        relevant_excerpt: "支持该事实的摘要"
+      - source_id: S002
+        title: "来源标题2"
+        url: "https://example.com/media-1"
+        source_type: "reputable_media"
+        reliability: medium_high
+        relevant_excerpt: "与官方说法一致"
+    writer_guidance:
+      usable_as_fact: true
+      recommended_phrasing: "建议写法"
+      avoid_phrasing:
+        - "不要扩大解释"
+        - "不要写成更强结论"
+
+  - claim_id: C002
+    claim_text: "关键事实2"
+    status: conflicted
+    conclusion: "不同来源说法不一致，不能直接写为确定事实"
+    confidence: medium
+    evidence_strength: moderate
+    sources:
+      - source_id: S003
+        title: "来源标题3"
+        url: "https://example.com/report-1"
+        source_type: "analyst_report"
+        reliability: medium_high
+        relevant_excerpt: "一种说法"
+      - source_id: S004
+        title: "来源标题4"
+        url: "https://example.com/report-2"
+        source_type: "analyst_report"
+        reliability: medium_high
+        relevant_excerpt: "另一种说法"
+    writer_guidance:
+      usable_as_fact: false
+      recommended_phrasing: "可写成‘目前存在不同说法/口径不一’"
+      avoid_phrasing:
+        - "不要写成绝对结论"
+
+  - claim_id: C003
+    claim_text: "关键事实3"
+    status: insufficient_evidence
+    conclusion: "未找到足够高质量来源支持"
+    confidence: low
+    evidence_strength: weak
+    sources:
+      - source_id: S005
+        title: "社区讨论"
+        url: "https://example.com/community-1"
+        source_type: "community"
+        reliability: low
+        relevant_excerpt: "仅为用户讨论"
+    writer_guidance:
+      usable_as_fact: false
+      recommended_phrasing: "如需提及，只能写成‘有相关讨论/说法’"
+      avoid_phrasing:
+        - "不要写成事实"
+        - "不要写具体数据"
+
+topic_support_materials:
+  definitions:
+    - item_id: D001
+      term: "关键概念1"
+      definition: "来源支持下的定义"
+      sources:
+        - "S010"
+      writer_value: "可用于解释背景"
+
+  data_points:
+    - item_id: DP001
+      label: "关键数据1"
+      data_text: "某项数据描述"
+      data_value: "xx%"
+      date_scope: "2025"
+      geography_scope: "global"
+      sources:
+        - "S011"
+        - "S012"
+      confidence: high
+      writer_value: "可增强论证强度"
+
+  cases:
+    - item_id: CASE001
+      case_title: "典型案例A"
+      summary: "案例摘要"
+      why_it_matters: "能帮助 Writer 落地表达"
+      sources:
+        - "S013"
+
+  comparisons:
+    - item_id: CMP001
+      comparison_axis: "A vs B"
+      summary: "关键差异"
+      sources:
+        - "S014"
+        - "S015"
+      confidence: medium
+
+  controversies:
+    - item_id: CT001
+      issue: "该话题存在争议点"
+      viewpoints:
+        - "观点1"
+        - "观点2"
+      sources:
+        - "S016"
+        - "S017"
+      writer_value: "可提高内容层次"
+
+evidence_backed_insights:
+  - insight_id: I001
+    insight_text: "这个话题真正值得写的，不只是A，而是A背后的B"
+    insight_type: "angle"
+    based_on:
+      verified_claim_ids:
+        - "C001"
+      support_material_ids:
+        - "DP001"
+        - "CASE001"
+    reasoning: "因为数据表明..., 案例又显示..."
+    confidence: medium
+    not_a_fact: true
+    writer_usage: "适合作为正文中段分析角度"
+
+  - insight_id: I002
+    insight_text: "对于目标平台，最有传播力的切口可能是具体痛点而非宏观趋势"
+    insight_type: "framing"
+    based_on:
+      support_material_ids:
+        - "CASE001"
+        - "CT001"
+    reasoning: "案例更具体，争议点更易引发讨论"
+    confidence: medium
+    not_a_fact: true
+    writer_usage: "适合作为标题和开头 framing"
+    
+writer_packet:
+  safe_facts:
+    - item: "可以直接写成事实的内容1"
+      source_ids:
+        - "S001"
+        - "S002"
+
+  cautious_points:
+    - item: "可以提，但要加限定词的内容1"
+      source_ids:
+        - "S003"
+        - "S004"
+
+  useful_data:
+    - item_id: "DP001"
+      suggested_use: "适合正文论证"
+
+  useful_cases:
+    - item_id: "CASE001"
+      suggested_use: "适合中段展开"
+
+  useful_definitions:
+    - item_id: "D001"
+      suggested_use: "适合开头做背景解释"
+
+  promising_angles:
+    - insight_id: "I001"
+    - insight_id: "I002"
+
+  forbidden_claims:
+    - "不能写成事实的说法1"
+    - "不能写成确定结论的说法2"
+
+open_issues:
+  - issue_id: O001
+    description: "某关键数据只有二手来源，缺少官方交叉验证"
+    impact: "影响论证强度"
+    suggested_next_step: "继续寻找官方报告或权威白皮书"
+
+  - issue_id: O002
+    description: "某争议点缺少反方权威来源"
+    impact: "容易让文章偏单边"
+    suggested_next_step: "补充反方来源"
+
+source_registry:
+  - source_id: S001
+    title: "来源标题1"
+    url: "https://example.com/official-1"
+    source_type: "official"
+    reliability: high
+
+  - source_id: S002
+    title: "来源标题2"
+    url: "https://example.com/media-1"
+    source_type: "reputable_media"
+    reliability: medium_high
+
+  - source_id: S003
+    title: "来源标题3"
+    url: "https://example.com/report-1"
+    source_type: "analyst_report"
+    reliability: medium_high
+
+status:
+  verification_complete: false
+  deep_dive_complete: true
+  ready_for_writer: true

@@ -1,0 +1,44 @@
+<!--
+  生活方式模板 — 温暖清新
+  适用：美食/旅行/时尚/情感/健康养生
+  主色：#ff6b6b (暖红)  辅色：#ffeaa7 (暖黄)  背景：#fdf6f0
+-->
+
+<section style="max-width:574px;margin:0 auto;padding:0;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;font-size:16px;line-height:1.8;color:#4a4a4a;">
+
+  <!-- 顶部装饰 -->
+  <section style="text-align:center;padding:24px 20px 0;">
+    <p style="font-size:28px;margin:0;">{{emoji|default('✨')}}</p>
+  </section>
+
+  <!-- 标题区 -->
+  <section style="text-align:center;padding:12px 20px 20px;">
+    <h1 style="font-size:22px;font-weight:700;color:#2d3436;margin:0 0 8px;line-height:1.4;">{{title}}</h1>
+    <section style="display:inline-block;background:linear-gradient(180deg,transparent 60%,#ffeaa7 60%);padding:0 4px;">
+      <p style="font-size:14px;color:#636e72;margin:0;">{{subtitle|default('')}}</p>
+    </section>
+    <p style="font-size:13px;color:#b2bec3;margin:8px 0 0;">{{author}} · {{date}}</p>
+  </section>
+
+  <!-- 导语卡片 -->
+  <section style="background:#fdf6f0;margin:0 16px 20px;padding:16px 20px;border-radius:12px;position:relative;">
+    <p style="font-size:32px;color:#ff6b6b;margin:0;line-height:1;opacity:0.3;">❝</p>
+    <p style="font-size:15px;color:#636e72;margin:4px 0 0;line-height:1.6;">{{lead}}</p>
+  </section>
+
+  <!-- 正文区 -->
+  <section style="padding:0 20px;">
+    <!-- 正文 h2 样式建议：font-size:18px;color:#2d3436;margin:24px 0 12px;padding-left:12px;border-left:4px solid #ff6b6b; -->
+    <!-- 正文 p 样式建议：color:#4a4a4a;margin:12px 0; -->
+    <!-- 正文配图建议：width:100%;border-radius:12px;margin:16px 0;box-shadow:0 2px 8px rgba(0,0,0,0.08); -->
+    <!-- 高亮文字建议：background:linear-gradient(180deg,transparent 60%,#ffeaa7 60%);padding:0 2px; -->
+    {{content}}
+  </section>
+
+  <!-- 尾部互动区 -->
+  <section style="text-align:center;padding:24px 20px;margin-top:16px;">
+    <section style="height:1px;background:linear-gradient(90deg,transparent,#dfe6e9,transparent);margin-bottom:20px;"></section>
+    <p style="font-size:14px;color:#b2bec3;margin:0;">{{cta|default('喜欢就点个「在看」吧 ♡')}}</p>
+  </section>
+
+</section>

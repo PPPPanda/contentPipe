@@ -1,0 +1,53 @@
+<!--
+  教育学习模板 — 清晰易读
+  适用：学习方法/教程/干货分享/知识科普
+  主色：#6c5ce7 (靛紫)  辅色：#a29bfe (浅紫)  背景：#fafafa
+-->
+
+<section style="max-width:574px;margin:0 auto;padding:0;font-family:-apple-system,BlinkMacSystemFont,'PingFang SC','Microsoft YaHei',sans-serif;font-size:16px;line-height:1.8;color:#2d3436;">
+
+  <!-- 顶部标签 -->
+  <section style="text-align:center;padding:20px 20px 0;">
+    <section style="display:inline-block;background:linear-gradient(135deg,#6c5ce7,#a29bfe);color:#fff;font-size:12px;padding:4px 16px;border-radius:20px;">
+      <p style="margin:0;">{{category|default('📚 知识干货')}}</p>
+    </section>
+  </section>
+
+  <!-- 标题 -->
+  <section style="text-align:center;padding:16px 20px 24px;">
+    <h1 style="font-size:22px;font-weight:700;color:#2d3436;margin:0 0 8px;line-height:1.4;">{{title}}</h1>
+    <p style="font-size:13px;color:#b2bec3;margin:0;">{{author}} · {{date}}</p>
+  </section>
+
+  <!-- 导语卡片 -->
+  <section style="background:#f0efff;margin:0 16px 20px;padding:16px 20px;border-radius:8px;">
+    <p style="font-size:14px;font-weight:600;color:#6c5ce7;margin:0 0 4px;">💡 本文要点</p>
+    <p style="font-size:15px;color:#636e72;margin:0;line-height:1.6;">{{lead}}</p>
+  </section>
+
+  <!-- 正文 -->
+  <section style="padding:0 20px;">
+    <!-- 正文 h2：font-size:18px;color:#6c5ce7;margin:28px 0 12px;font-weight:700; -->
+    <!-- 编号标题：在 h2 前加数字圆圈 background:#6c5ce7;color:#fff;width:24px;height:24px;border-radius:50%;display:inline-block;text-align:center;line-height:24px;font-size:14px;margin-right:8px; -->
+    <!-- 正文 p：color:#2d3436;margin:12px 0; -->
+    <!-- 知识框：background:#f0efff;padding:12px 16px;border-radius:8px;margin:16px 0; -->
+    <!-- 重点：color:#6c5ce7;font-weight:600; -->
+    <!-- 步骤列表：padding-left:0;list-style:none; 每项前加紫色圆点 -->
+    {{content}}
+  </section>
+
+  <!-- 总结卡片（可选） -->
+  <!--
+  <section style="background:linear-gradient(135deg,#6c5ce7,#a29bfe);margin:20px 16px;padding:20px;border-radius:8px;color:#fff;">
+    <p style="font-size:16px;font-weight:600;margin:0 0 8px;">📋 总结</p>
+    <p style="font-size:14px;margin:0;line-height:1.6;opacity:0.9;">{{summary}}</p>
+  </section>
+  -->
+
+  <!-- 尾部 -->
+  <section style="text-align:center;padding:24px 20px;">
+    <section style="height:1px;background:linear-gradient(90deg,transparent,#dfe6e9,transparent);margin-bottom:16px;"></section>
+    <p style="font-size:14px;color:#b2bec3;margin:0;">{{cta|default('觉得有用？转发给需要的朋友 →')}}</p>
+  </section>
+
+</section>

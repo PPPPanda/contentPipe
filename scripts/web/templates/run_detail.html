@@ -1,0 +1,328 @@
+{% extends "base.html" %}
+
+{% block title %}ContentPipe — {{ run._title }}{% endblock %}
+{% block header %}
+    <div class="flex items-center gap-3">
+        <a href="/runs" class="text-slate-400 hover:text-white">←</a>
+        <span>{{ run._title }}</span>
+    </div>
+{% endblock %}
+
+{% block header_actions %}
+    {% if run.status == 'review' %}
+    <a href="/runs/{{ run.run_id }}/review"
+       class="px-3 py-1.5 bg-yellow-600 text-white text-sm rounded-lg hover:bg-yellow-500 transition">
+        审核 →
+    </a>
+    {% endif %}
+    {% if run.status in ['pending', 'review'] %}
+    <button hx-post="/api/runs/{{ run.run_id }}/start"
+            hx-swap="none"
+            class="px-3 py-1.5 bg-green-600 text-white text-sm rounded-lg hover:bg-green-500 transition">
+        ▶ 继续
+    </button>
+    {% endif %}
+    {% if run.status in ['running', 'review', 'pending'] %}
+    <button onclick="doAction('/api/runs/{{ run.run_id }}/cancel', '确定暂停此 Run？')"
+            class="btn-warn px-3 py-1.5 text-sm">
+        ⏸ 暂停
+    </button>
+    {% endif %}
+    {% if run.status not in ['running'] %}
+    <button onclick="doActionRedirect('/api/runs/{{ run.run_id }}/delete', '确定删除？不可恢复。', '/runs')"
+            class="btn-danger px-3 py-1.5 text-sm">
+        🗑 删除
+    </button>
+    {% endif %}
+{% endblock %}
+
+{% block content %}
+<!-- 元信息 -->
+<div class="flex items-center gap-4 text-sm text-slate-400 mb-6">
+    <span class="font-mono">{{ run.run_id }}</span>
+    <span class="text-slate-600">·</span>
+    <span>平台: {{ run.platform }}</span>
+    <span class="text-slate-600">·</span>
+    <span>状态:
+        {% if run.status == 'completed' %}
+            <span class="text-green-400">✅ 完成</span>
+        {% elif run.status == 'running' %}
+            <span class="text-blue-400">🔵 运行中</span>
+        {% elif run.status == 'review' %}
+            <span class="text-yellow-400">⏸ 待审核</span>
+        {% elif run.status == 'failed' %}
+            <span class="text-red-400">❌ 失败</span>
+        {% else %}
+            <span>{{ run.status }}</span>
+        {% endif %}
+    </span>
+    <span class="text-slate-600">·</span>
+    <span>{{ (run.created_at or '-')[:16] }}</span>
+</div>
+
+<!-- SSE 实时更新容器 -->
+<div hx-ext="sse" sse-connect="/sse/{{ run.run_id }}">
+
+    <!-- Pipeline 进度条 -->
+    <div class="card p-4 mb-6" id="progress-bar" sse-swap="node_complete">
+        <div class="flex items-center gap-1 justify-between">
+            {% for node in run._nodes %}
+            {% if not loop.first %}
+            <div class="progress-connector
+                {% if node.status == 'completed' %}connector-done
+                {% elif node.status in ['running', 'review'] %}connector-active
+                {% else %}connector-pending{% endif %}">
+            </div>
+            {% endif %}
+
+            <div class="flex flex-col items-center gap-1 shrink-0
+                {% if node.status == 'completed' %}text-green-400
+                {% elif node.status in ['running', 'review'] %}text-yellow-400
+                {% else %}text-slate-600{% endif %}">
+                <span class="text-lg">
+                    {% if node.status == 'completed' %}✅
+                    {% elif node.status == 'running' %}⏳
+                    {% elif node.status == 'review' %}⏸️
+                    {% else %}○{% endif %}
+                </span>
+                <span class="text-xs whitespace-nowrap">{{ node.label }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- 实时状态更新 -->
+    <div class="mb-4" id="live-status" sse-swap="node_start,node_error,review_needed,run_complete">
+        {% if run.status == 'review' %}
+        <div class="flex items-center gap-2 text-yellow-400 p-3 bg-yellow-900/20 rounded-lg">
+            <span>⏸️</span>
+            <span>{{ run.current_stage }} — 需要人工操作</span>
+            <a href="/runs/{{ run.run_id }}/review"
+               class="ml-auto px-3 py-1 bg-yellow-600 text-white rounded hover:bg-yellow-500 text-sm">
+               去审核 →
+            </a>
+        </div>
+        {% endif %}
+    </div>
+
+</div>
+
+<!-- 节点详情列表 -->
+<div class="card divide-y divide-slate-700/50">
+    {% for node in run._nodes %}
+    <div class="p-4">
+        <div class="flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <!-- 状态图标 -->
+                <span class="text-lg w-6 text-center">
+                    {% if node.status == 'completed' %}
+                        <span class="text-green-400">✅</span>
+                    {% elif node.status == 'running' %}
+                        <span class="text-blue-400 pulse-dot">⏳</span>
+                    {% elif node.status == 'review' %}
+                        <span class="text-yellow-400">⏸️</span>
+                    {% else %}
+                        <span class="text-slate-600">○</span>
+                    {% endif %}
+                </span>
+
+                <!-- 节点信息 -->
+                <div>
+                    <span class="text-white font-medium">{{ node.icon }} {{ node.label }}</span>
+                    {% if node.status == 'review' %}
+                        <span class="text-yellow-400 text-xs ml-2">(等待审核)</span>
+                    {% elif node.status == 'pending' %}
+                        <span class="text-slate-500 text-xs ml-2">(待执行)</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <div class="flex items-center gap-2">
+                {# 自动审核复选框（仅交互节点） #}
+                {% if node.id in ('scout','researcher','writer','de_ai_editor','director','formatter') %}
+                <label class="flex items-center gap-1 cursor-pointer select-none" title="勾选后此步骤自动通过，不暂停">
+                    <input type="checkbox"
+                           class="auto-skip-cb accent-sky-500"
+                           data-node="{{ node.id }}"
+                           data-run="{{ run.run_id }}"
+                           {% if run.auto_skip_nodes is defined and run.auto_skip_nodes is mapping and run.auto_skip_nodes[node.id] is defined and run.auto_skip_nodes[node.id] %}checked{% endif %}
+                           onchange="toggleAutoSkip(this)">
+                    <span class="text-xs text-slate-500">自动</span>
+                </label>
+                {% endif %}
+
+                {# 审核/聊天按钮（已完成或审核中都可打开） #}
+                {% if node.status in ('completed', 'review') %}
+                    <a href="/runs/{{ run.run_id }}/review?node={{ node.id }}"
+                       class="px-2 py-1 text-xs rounded transition
+                              {% if node.status == 'review' %}bg-yellow-600 text-white hover:bg-yellow-500
+                              {% else %}border border-slate-600 text-slate-300 hover:bg-slate-700{% endif %}">
+                        {% if node.status == 'review' %}审核 →{% else %}💬 查看{% endif %}
+                    </a>
+                {% endif %}
+
+                {% if node.status == 'completed' %}
+                    <button onclick="toggleNodeOutput(this, '{{ run.run_id }}', '{{ node.id }}')"
+                            data-expanded="false"
+                            class="node-toggle px-2 py-1 text-xs border border-slate-600 text-slate-300 rounded hover:bg-slate-700 transition">
+                        展开
+                    </button>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- 节点输出（按需加载） -->
+        <div id="output-{{ node.id }}" class="mt-2 hidden"></div>
+    </div>
+    {% endfor %}
+</div>
+
+<!-- 文章预览（只要有文章内容就显示） -->
+{% set article_content = run.article_edited or (run.article.content if run.article is defined and run.article is mapping else '') %}
+{% if article_content %}
+<div class="card p-4 mt-6">
+    <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wider">📄 文章预览</h3>
+        {% if run.article is defined and run.article is mapping %}
+        <span class="text-xs text-slate-500">{{ run.article.word_count | default('') }} 字</span>
+        {% endif %}
+    </div>
+    <div class="bg-slate-800/50 rounded-lg p-4 max-h-96 overflow-y-auto text-slate-300 text-sm leading-relaxed whitespace-pre-wrap">{{ article_content }}</div>
+</div>
+{% endif %}
+
+<!-- 配图方案（director 完成后显示） -->
+{% if run.visual_plan is defined and run.visual_plan is mapping %}
+<div class="card p-4 mt-4">
+    <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wider">🎨 配图方案</h3>
+        <span class="text-xs text-slate-500">{{ run.visual_plan.style | default('') }}</span>
+    </div>
+    <p class="text-xs text-slate-400 mb-3">{{ run.visual_plan.global_tone | default('') | truncate(120) }}</p>
+    <div class="space-y-2">
+        {% for p in run.visual_plan.placements | default([]) %}
+        <div class="bg-slate-800/50 rounded p-3">
+            <p class="text-xs text-sky-400 mb-1">配图 {{ loop.index }} · {{ p.purpose | default('') }}</p>
+            <p class="text-sm text-slate-300">{{ p.description | default('') | truncate(150) }}</p>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+
+<!-- 快捷操作 -->
+{% if run.status == 'completed' %}
+<div class="mt-4 flex gap-3">
+    <a href="/runs/{{ run.run_id }}/preview"
+       class="px-4 py-2 bg-sky-600 text-white rounded-lg hover:bg-sky-500 transition">
+        📖 查看排版预览
+    </a>
+</div>
+{% endif %}
+
+{% if run.error %}
+<div class="card p-4 mt-4 border-red-600/30">
+    <h3 class="text-red-400 text-sm font-semibold mb-2">❌ 错误信息</h3>
+    <pre class="text-xs text-red-300 bg-red-900/20 p-3 rounded overflow-x-auto">{{ run.error }}</pre>
+    <p class="text-xs text-slate-500 mt-2">阶段: {{ run.error_stage or '未知' }}</p>
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+async function toggleAutoSkip(cb) {
+    const nodeId = cb.dataset.node;
+    const runId = cb.dataset.run;
+    const skip = cb.checked;
+    try {
+        await fetch('/api/runs/' + runId + '/auto-skip', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({node_id: nodeId, skip: skip})
+        });
+    } catch(e) {
+        console.error('auto-skip toggle failed', e);
+        cb.checked = !skip;
+    }
+}
+
+// ─── Modal 确认 ───
+let _pendingUrl = '', _pendingRedirect = '';
+function _ensureModal() {
+    if (document.getElementById('modal-overlay')) return;
+    document.body.insertAdjacentHTML('beforeend', `
+        <div id="toast" class="fixed top-4 right-4 z-50 hidden px-4 py-2 rounded-lg text-sm font-medium shadow-lg"></div>
+        <div id="modal-overlay" class="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm hidden items-center justify-center" onclick="if(event.target===this)closeModal()">
+            <div class="card p-6 max-w-sm mx-auto">
+                <p id="modal-msg" class="text-white mb-4"></p>
+                <div class="flex justify-end gap-3">
+                    <button onclick="closeModal()" class="btn-secondary px-4 py-2 text-sm">取消</button>
+                    <button id="modal-confirm-btn" class="btn-danger px-4 py-2 text-sm">确认</button>
+                </div>
+            </div>
+        </div>`);
+    document.getElementById('modal-confirm-btn').onclick = _doConfirm;
+}
+function showModal(url, msg, redirect) {
+    _ensureModal();
+    _pendingUrl = url; _pendingRedirect = redirect || '';
+    document.getElementById('modal-msg').textContent = msg;
+    const o = document.getElementById('modal-overlay');
+    o.classList.remove('hidden'); o.classList.add('flex');
+}
+function closeModal() {
+    const o = document.getElementById('modal-overlay');
+    if (o) { o.classList.add('hidden'); o.classList.remove('flex'); }
+    _pendingUrl = ''; _pendingRedirect = '';
+}
+async function _doConfirm() {
+    if (!_pendingUrl) return;
+    const url = _pendingUrl, redir = _pendingRedirect;
+    closeModal();
+    _showToast('⏳ 处理中...', 'bg-blue-600');
+    try {
+        const r = await fetch(url, { method: 'POST' });
+        if (r.ok) {
+            _showToast('✅ 操作成功', 'bg-emerald-600');
+            setTimeout(() => { window.location.href = redir || window.location.href; }, 500);
+        } else { _showToast('❌ 失败: ' + r.status, 'bg-red-600'); }
+    } catch(e) { _showToast('❌ 网络错误', 'bg-red-600'); }
+}
+function _showToast(text, cls) {
+    _ensureModal();
+    const t = document.getElementById('toast');
+    t.textContent = text;
+    t.className = 'fixed top-4 right-4 z-50 px-4 py-2 rounded-lg text-sm font-medium shadow-lg ' + cls;
+    setTimeout(() => t.classList.add('hidden'), 2500);
+}
+function doAction(url, msg) { showModal(url, msg); }
+function doActionRedirect(url, msg, redirect) { showModal(url, msg, redirect); }
+
+async function toggleNodeOutput(btn, runId, nodeId) {
+    const target = document.getElementById('output-' + nodeId);
+    const expanded = btn.dataset.expanded === 'true';
+
+    if (expanded) {
+        target.classList.add('hidden');
+        btn.textContent = '展开';
+        btn.dataset.expanded = 'false';
+    } else {
+        if (!target.dataset.loaded) {
+            btn.textContent = '加载中...';
+            try {
+                const resp = await fetch('/api/runs/' + runId + '/nodes/' + nodeId + '/output');
+                target.innerHTML = await resp.text();
+                target.dataset.loaded = 'true';
+            } catch (e) {
+                target.innerHTML = '<p class="text-red-400 text-xs">加载失败</p>';
+            }
+        }
+        target.classList.remove('hidden');
+        btn.textContent = '收起';
+        btn.dataset.expanded = 'true';
+    }
+}
+</script>
+{% endblock %}

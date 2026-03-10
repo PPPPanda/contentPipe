@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}ContentPipe — 新建 Run{% endblock %}
+{% block header %}新建 Run{% endblock %}
+
+{% block content %}
+<div class="max-w-lg">
+    <form hx-post="/api/runs" hx-target="#main-content" hx-headers='{"Content-Type": "application/json"}'
+          class="card p-6 space-y-5">
+
+        <!-- 平台选择 -->
+        <div>
+            <label class="block text-sm text-slate-300 mb-2">目标平台</label>
+            <div class="flex gap-3">
+                <label class="flex-1 cursor-pointer">
+                    <input type="radio" name="platform" value="wechat" checked class="peer hidden">
+                    <div class="peer-checked:border-sky-500 peer-checked:bg-sky-900/20 border border-slate-600 rounded-lg p-3 text-center transition">
+                        <p class="text-2xl">📱</p>
+                        <p class="text-sm text-white mt-1">微信公众号</p>
+                        <p class="text-xs text-slate-400">长文排版</p>
+                    </div>
+                </label>
+                <label class="flex-1 cursor-pointer">
+                    <input type="radio" name="platform" value="xhs" class="peer hidden">
+                    <div class="peer-checked:border-sky-500 peer-checked:bg-sky-900/20 border border-slate-600 rounded-lg p-3 text-center transition">
+                        <p class="text-2xl">📕</p>
+                        <p class="text-sm text-white mt-1">小红书</p>
+                        <p class="text-xs text-slate-400">图文笔记</p>
+                    </div>
+                </label>
+            </div>
+        </div>
+
+        <!-- 话题（可选） -->
+        <div>
+            <label class="block text-sm text-slate-300 mb-2">
+                指定话题 <span class="text-slate-500">（留空则自动选题）</span>
+            </label>
+            <input type="text" name="topic" placeholder="例: AI Agent 在软件开发中的应用"
+                   class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none">
+        </div>
+
+        <!-- 审核模式 -->
+        <div>
+            <label class="block text-sm text-slate-300 mb-2">审核模式</label>
+            <div class="flex gap-3">
+                <label class="flex-1 cursor-pointer">
+                    <input type="radio" name="auto_approve" value="false" checked class="peer hidden">
+                    <div class="peer-checked:border-yellow-500 peer-checked:bg-yellow-900/20 border border-slate-600 rounded-lg p-3 text-center transition">
+                        <p class="text-2xl">👤</p>
+                        <p class="text-sm text-white mt-1">人工审核</p>
+                        <p class="text-xs text-slate-400">审核节点暂停，可与 AI 讨论后决定</p>
+                    </div>
+                </label>
+                <label class="flex-1 cursor-pointer">
+                    <input type="radio" name="auto_approve" value="true" class="peer hidden">
+                    <div class="peer-checked:border-green-500 peer-checked:bg-green-900/20 border border-slate-600 rounded-lg p-3 text-center transition">
+                        <p class="text-2xl">🤖</p>
+                        <p class="text-sm text-white mt-1">全自动</p>
+                        <p class="text-xs text-slate-400">审核节点自动通过，一键到底</p>
+                    </div>
+                </label>
+            </div>
+        </div>
+
+        <!-- 提交 -->
+        <div class="flex gap-3 pt-2">
+            <button type="submit"
+                    class="flex-1 px-4 py-2.5 bg-sky-600 text-white rounded-lg hover:bg-sky-500 transition font-medium">
+                🚀 创建并启动
+            </button>
+            <a href="/runs" class="px-4 py-2.5 border border-slate-600 text-slate-300 rounded-lg hover:bg-slate-800 transition text-center">
+                取消
+            </a>
+        </div>
+    </form>
+</div>
+
+<script>
+    const form = document.querySelector('form');
+
+    // 拦截 HTMX，改用自定义 JSON 提交
+    form.removeAttribute('hx-post');
+    form.removeAttribute('hx-target');
+    form.removeAttribute('hx-headers');
+
+    form.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        const fd = new FormData(form);
+        const body = {
+            platform: fd.get('platform') || 'wechat',
+            topic: fd.get('topic') || '',
+            auto_approve: fd.get('auto_approve') === 'true',
+        };
+
+        const resp = await fetch('/api/runs', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(body),
+        });
+        const data = await resp.json();
+        if (data.run_id) {
+            // 自动启动
+            await fetch('/api/runs/' + data.run_id + '/start', {method: 'POST'});
+            window.location.href = '/runs/' + data.run_id;
+        }
+    });
+</script>
+{% endblock %}

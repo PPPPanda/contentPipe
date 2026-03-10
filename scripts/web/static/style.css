@@ -1,0 +1,28 @@
+/* ContentPipe 自定义样式 — 补充 Tailwind */
+
+/* 滚动条美化 */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #475569; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+/* 页面切换过渡 */
+.htmx-settling { opacity: 0; }
+.htmx-swapping { opacity: 0; transition: opacity 0.1s ease-out; }
+
+/* 表格 hover */
+table tr:hover td { background: rgba(30, 41, 59, 0.5); }
+
+/* radio 样式 */
+input[type="radio"] {
+    accent-color: #0ea5e9;
+}
+
+/* 展开/收起动画 */
+details[open] summary ~ * {
+    animation: fadeIn 0.15s ease-in-out;
+}
+@keyframes fadeIn {
+    from { opacity: 0; transform: translateY(-4px); }
+    to { opacity: 1; transform: translateY(0); }
+}

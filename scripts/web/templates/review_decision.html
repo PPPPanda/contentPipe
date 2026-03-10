@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+
+{% block title %}ContentPipe — 配图决策审核{% endblock %}
+{% block header %}
+    <div class="flex items-center gap-3">
+        <a href="/runs/{{ run.run_id }}" class="text-slate-400 hover:text-white">← 返回</a>
+        <span>配图决策审核</span>
+    </div>
+{% endblock %}
+{% block header_actions %}{% endblock %}
+
+{% block extra_head %}
+<style>
+    .chat-box { height: 320px; overflow-y: auto; scroll-behavior: smooth; }
+    .chat-msg { max-width: 85%; }
+    .chat-user { margin-left: auto; background: #1e40af; }
+    .chat-ai { margin-right: auto; background: #334155; }
+    .typing-dot { animation: blink 1.4s infinite both; }
+    .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+    .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes blink { 0%, 80%, 100% { opacity: 0; } 40% { opacity: 1; } }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+    <!-- 左栏：内容概览 -->
+    <div class="space-y-4">
+        <!-- 风格摘要 -->
+        <div class="card p-4">
+            <div class="flex flex-wrap items-center gap-4 text-sm">
+                <div><span class="text-slate-500">风格</span> <span class="text-white ml-1">{{ visual_plan.style or '默认' }}</span></div>
+                <div><span class="text-slate-500">配图</span> <span class="text-white ml-1">{{ visual_plan.placements | length if visual_plan.placements else 0 }} 张</span></div>
+                <div class="text-xs text-slate-400 flex-1">{{ (visual_plan.global_tone or '')[:100] }}</div>
+            </div>
+        </div>
+
+        <!-- 文章预览 -->
+        <div class="card p-4">
+            <h3 class="text-xs text-slate-500 uppercase mb-2">📄 文章内容</h3>
+            <div class="text-sm text-slate-300 leading-relaxed max-h-48 overflow-y-auto whitespace-pre-wrap">{{ article_content[:1500] }}{% if article_content|length > 1500 %}…{% endif %}</div>
+        </div>
+
+        <!-- 配图方案 -->
+        {% if visual_plan.placements %}
+        <div class="card p-4">
+            <h3 class="text-xs text-slate-500 uppercase mb-3">🎨 配图方案</h3>
+            <div class="space-y-3">
+                {% for p in visual_plan.placements %}
+                <div class="bg-slate-800/50 rounded-lg p-3">
+                    <div class="flex justify-between mb-1">
+                        <span class="text-sky-400 text-sm font-medium">配图 {{ loop.index }}</span>
+                        <span class="text-xs text-slate-500">{{ p.type or 'illustration' }} · {{ p.size_hint or 'full' }}</span>
+                    </div>
+                    <p class="text-sm text-slate-300 mb-1">{{ p.description[:120] }}{% if p.description|length > 120 %}…{% endif %}</p>
+                    <p class="text-xs text-slate-500">🎯 {{ p.purpose or '' }}</p>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- 右栏：AI 聊天 + 审批 -->
+    <div class="space-y-4">
+        <!-- 聊天窗 -->
+        <div class="card p-4 flex flex-col" style="min-height: 480px;">
+            <h3 class="text-xs text-slate-500 uppercase mb-3">💬 与 AI 讨论</h3>
+
+            <!-- 聊天消息区 -->
+            <div id="chat-messages" class="chat-box flex-1 space-y-3 mb-3 pr-1">
+                <div class="chat-msg chat-ai rounded-lg px-3 py-2 text-sm text-slate-200">
+                    👋 你好！我是审核助手。当前阶段是<strong>配图决策审核</strong>。
+                    <br><br>你可以问我：
+                    <br>• 文章内容质量如何？
+                    <br>• 配图方案合理吗？
+                    <br>• 建议修改什么方向？
+                    <br><br>讨论满意后点击下方按钮继续 Pipeline。
+                </div>
+            </div>
+
+            <!-- 输入区 -->
+            <div class="flex gap-2">
+                <input type="text" id="chat-input" placeholder="输入你的想法或问题..."
+                       class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none"
+                       onkeydown="if(event.key==='Enter')sendChat()">
+                <button onclick="sendChat()"
+                        class="px-4 py-2 bg-sky-600 text-white rounded-lg hover:bg-sky-500 transition text-sm shrink-0">
+                    发送
+                </button>
+            </div>
+        </div>
+
+        <!-- 审批操作 -->
+        <form hx-post="/api/runs/{{ run.run_id }}/review" class="card p-4">
+            <div class="flex gap-3">
+                <button type="submit" name="action" value="approve"
+                        class="flex-1 px-4 py-3 bg-green-600 text-white rounded-lg hover:bg-green-500 transition font-medium text-base">
+                    ✅ 通过，继续下一步
+                </button>
+                <button type="submit" name="action" value="revise"
+                        onclick="document.getElementById('revise-box').classList.toggle('hidden'); return false;"
+                        class="px-4 py-3 bg-amber-600 text-white rounded-lg hover:bg-amber-500 transition font-medium">
+                    ↩ 打回修改
+                </button>
+            </div>
+            <div id="revise-box" class="hidden mt-3">
+                <textarea name="feedback" rows="2" placeholder="修改意见..."
+                          class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none mb-2"></textarea>
+                <button type="submit" name="action" value="revise"
+                        class="w-full px-4 py-2 bg-amber-600 text-white rounded-lg hover:bg-amber-500 transition text-sm">
+                    提交修改意见
+                </button>
+            </div>
+        </form>
+    </div>
+
+</div>
+
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const runId = '{{ run.run_id }}';
+const chatBox = document.getElementById('chat-messages');
+const chatInput = document.getElementById('chat-input');
+
+// 加载历史消息
+(async () => {
+    try {
+        const resp = await fetch(`/api/runs/${runId}/chat/history`);
+        const msgs = await resp.json();
+        for (const msg of msgs) {
+            appendMsg(msg.role, msg.content);
+        }
+    } catch(e) {}
+})();
+
+function appendMsg(role, content) {
+    const div = document.createElement('div');
+    div.className = `chat-msg ${role === 'user' ? 'chat-user' : 'chat-ai'} rounded-lg px-3 py-2 text-sm text-slate-200`;
+    div.innerHTML = content.replace(/\n/g, '<br>');
+    chatBox.appendChild(div);
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function showTyping() {
+    const div = document.createElement('div');
+    div.id = 'typing-indicator';
+    div.className = 'chat-msg chat-ai rounded-lg px-3 py-2 text-sm text-slate-400 flex gap-1';
+    div.innerHTML = '<span class="typing-dot">●</span><span class="typing-dot">●</span><span class="typing-dot">●</span>';
+    chatBox.appendChild(div);
+    chatBox.scrollTop = chatBox.scrollHeight;
+}
+
+function hideTyping() {
+    const el = document.getElementById('typing-indicator');
+    if (el) el.remove();
+}
+
+async function sendChat() {
+    const msg = chatInput.value.trim();
+    if (!msg) return;
+
+    chatInput.value = '';
+    appendMsg('user', msg);
+    showTyping();
+
+    try {
+        const resp = await fetch(`/api/runs/${runId}/chat`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({message: msg}),
+        });
+        const data = await resp.json();
+        hideTyping();
+        appendMsg('assistant', data.content || '(无回复)');
+    } catch(e) {
+        hideTyping();
+        appendMsg('assistant', '⚠️ 请求失败: ' + e.message);
+    }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block title %}ContentPipe — 图片选择{% endblock %}
+{% block header %}
+    <div class="flex items-center gap-3">
+        <a href="/runs/{{ run.run_id }}" class="text-slate-400 hover:text-white">← 返回</a>
+        <span>图片选择</span>
+    </div>
+{% endblock %}
+
+{% block header_actions %}{% endblock %}
+
+{% block content %}
+<form hx-post="/api/runs/{{ run.run_id }}/review" class="space-y-6">
+    <input type="hidden" name="action" value="select">
+
+    {% for placement in candidates %}
+    <div class="card p-6">
+        <h3 class="text-white font-medium mb-1">
+            🎨 配图 #{{ loop.index }} — {{ placement.original_description[:60] }}{% if placement.original_description|length > 60 %}...{% endif %}
+        </h3>
+        <p class="text-xs text-slate-500 mb-4">{{ placement.id }} · {{ placement.aspect_ratio or '16:9' }}</p>
+
+        <!-- 3 张图片选择 -->
+        <div class="grid grid-cols-3 gap-4 mb-4">
+            {% for candidate in placement.candidates %}
+            <label class="cursor-pointer group">
+                <input type="radio" name="select_{{ placement.id }}" value="{{ candidate.option }}"
+                       {% if candidate.option == placement.recommended %}checked{% endif %}
+                       class="peer hidden">
+                <div class="peer-checked:border-sky-500 peer-checked:ring-2 peer-checked:ring-sky-500/30
+                            border-2 border-slate-600 rounded-lg overflow-hidden transition group-hover:border-slate-400">
+                    <!-- 图片 -->
+                    {% set image_name = placement.id ~ '_' ~ candidate.option ~ '.png' %}
+                    {% set has_image = false %}
+                    {% for img in generated_images %}
+                        {% if img.placement_id == placement.id and img.option == candidate.option and img.success %}
+                            {% set has_image = true %}
+                        {% endif %}
+                    {% endfor %}
+
+                    <div class="aspect-video bg-slate-800 flex items-center justify-center">
+                        <img src="/api/runs/{{ run.run_id }}/images/{{ placement.id }}_{{ candidate.option }}.png"
+                             alt="{{ candidate.concept }}"
+                             class="w-full h-full object-cover"
+                             onerror="this.parentElement.innerHTML='<span class=\'text-slate-600 text-sm\'>图片加载失败</span>'">
+                    </div>
+
+                    <div class="p-3 bg-slate-800/50">
+                        <p class="text-sm text-white font-medium">
+                            {{ candidate.option }}. {{ candidate.concept or '选项' }}
+                            {% if candidate.option == placement.recommended %}
+                                <span class="text-yellow-400 text-xs">⭐ 推荐</span>
+                            {% endif %}
+                        </p>
+                        <p class="text-xs text-slate-400 mt-1">{{ candidate.prompt[:80] }}{% if candidate.prompt|length > 80 %}...{% endif %}</p>
+                    </div>
+                </div>
+            </label>
+            {% endfor %}
+        </div>
+
+        <!-- 不满意 -->
+        <details class="text-sm">
+            <summary class="text-slate-500 cursor-pointer hover:text-slate-300">都不满意？</summary>
+            <textarea name="feedback_{{ placement.id }}" rows="2"
+                      placeholder="描述你想要什么样的图片..."
+                      class="w-full mt-2 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none text-xs"></textarea>
+        </details>
+    </div>
+    {% endfor %}
+
+    <!-- 提交 -->
+    <div class="flex gap-3">
+        <button type="submit"
+                class="flex-1 px-4 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-500 transition font-medium">
+            ✅ 全部选完，进入排版
+        </button>
+        <button type="submit" name="action" value="revise"
+                class="px-4 py-2.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 transition">
+            ↩ 让导演重做
+        </button>
+    </div>
+</form>
+{% endblock %}

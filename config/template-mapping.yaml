@@ -1,0 +1,38 @@
+# 模板映射配置
+# Pipeline Formatter 阶段根据话题分类自动匹配模板
+
+wechat:
+  mapping:
+    # 科技类
+    - keywords: ["科技", "AI", "人工智能", "数码", "编程", "互联网", "区块链", "Web3", "芯片", "手机", "电脑", "软件", "开源"]
+      template: tech-digital.html
+      accent_color: "#1e90ff"
+
+    # 生活方式类
+    - keywords: ["美食", "旅行", "旅游", "时尚", "情感", "健康", "养生", "穿搭", "家居", "宠物", "亲子", "婚姻", "恋爱"]
+      template: lifestyle.html
+      accent_color: "#ff6b6b"
+
+    # 商业财经类
+    - keywords: ["财经", "投资", "股票", "基金", "商业", "职场", "创业", "经济", "金融", "理财", "房产", "保险"]
+      template: business-finance.html
+      accent_color: "#2c3e50"
+
+    # 新闻深度类
+    - keywords: ["新闻", "时事", "政策", "深度", "分析", "社会", "国际", "政治", "法律", "热点", "评论"]
+      template: news-insight.html
+      accent_color: "#e94560"
+
+    # 教育学习类
+    - keywords: ["学习", "教程", "知识", "干货", "方法", "考试", "留学", "英语", "读书", "成长", "技能", "心理学"]
+      template: education.html
+      accent_color: "#6c5ce7"
+
+  # 默认模板（无匹配时使用）
+  default: base.html
+  default_accent_color: "#07c160"
+
+xiaohongshu:
+  # 小红书模板待建设
+  mapping: []
+  default: null
