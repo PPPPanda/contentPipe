@@ -15,6 +15,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
+from web.auth import AuthMiddleware
+
 # 确保 scripts/ 在 sys.path
 SCRIPTS_DIR = Path(__file__).parent.parent
 if str(SCRIPTS_DIR) not in sys.path:
@@ -31,6 +33,7 @@ app = FastAPI(
     description="图文内容 Pipeline 主控台",
     version="0.7.0",
 )
+app.add_middleware(AuthMiddleware)
 
 # 静态文件
 STATIC_DIR = Path(__file__).parent / "static"

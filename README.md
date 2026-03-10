@@ -198,6 +198,8 @@ CONTENTPIPE_PORT=8765
 CONTENTPIPE_HOST=0.0.0.0
 CONTENTPIPE_NOTIFY_CHANNEL=<discord_channel_id>
 CONTENTPIPE_PUBLIC_BASE_URL=http://localhost:8765
+CONTENTPIPE_AUTH_TOKEN=change-me
+CONTENTPIPE_LOG_LEVEL=INFO
 
 WECHAT_APPID=...
 WECHAT_SECRET=...
@@ -209,6 +211,7 @@ ANTHROPIC_API_KEY=...
 说明：
 - `CONTENTPIPE_NOTIFY_CHANNEL` 为空时，不会发送 Discord 通知
 - `CONTENTPIPE_PUBLIC_BASE_URL` 用于 Discord 通知里的回链地址
+- `CONTENTPIPE_AUTH_TOKEN` 非空时，Web UI / API 会开启鉴权（浏览器登录或请求头 `X-ContentPipe-Token`）
 - 发布相关密钥建议只通过环境变量或本地未跟踪配置注入
 
 ---
@@ -225,14 +228,27 @@ ANTHROPIC_API_KEY=...
 ./start.sh restart
 ```
 
-### 6.2 直接启动 uvicorn
+### 6.2 Docker 一键部署（推荐给外部用户）
+
+```bash
+cp .env.example .env
+# 修改 .env 里的 CONTENTPIPE_AUTH_TOKEN / OPENCLAW_GATEWAY_URL
+
+docker compose up -d --build
+```
+
+启动后：
+- Web UI: `http://localhost:8765`
+- 首次访问会要求输入 `CONTENTPIPE_AUTH_TOKEN`
+
+### 6.3 直接启动 uvicorn
 
 ```bash
 cd scripts
 python3 -m uvicorn web.app:app --host 0.0.0.0 --port 8765
 ```
 
-### 6.3 健康检查
+### 6.4 健康检查
 
 ```bash
 curl http://localhost:8765/api/health
@@ -378,12 +394,16 @@ git push origin main
 
 ---
 
-## 12. License / 使用说明
+## 12. License / 开源配套文件
 
-仓库当前未附带正式许可证文件；在公开发布前，建议补充：
+仓库当前已经补齐以下公开发布基础文件：
 
-- `LICENSE`
+- `LICENSE`（MIT）
 - `CONTRIBUTING.md`
 - `SECURITY.md`
 
-如果你计划公开给其他人部署，这三项最好补齐。
+如果你准备正式 release，建议下一步继续补：
+
+- `CHANGELOG.md`
+- GitHub Release notes
+- 部署示例截图 / demo 数据

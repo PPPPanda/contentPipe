@@ -11,10 +11,13 @@ import json
 import httpx
 from typing import Optional
 
+from logutil import get_logger
+
 # 配置（可被环境变量覆盖）
 GATEWAY_URL = os.environ.get("OPENCLAW_GATEWAY_URL", "http://localhost:18789")
 NOTIFY_CHANNEL = os.environ.get("CONTENTPIPE_NOTIFY_CHANNEL", "")
 PUBLIC_BASE_URL = os.environ.get("CONTENTPIPE_PUBLIC_BASE_URL", "http://localhost:8765").rstrip("/")
+logger = get_logger(__name__)
 
 # 节点 emoji
 NODE_EMOJI = {
@@ -65,7 +68,7 @@ async def notify_discord(
             )
             return resp.status_code == 200
     except Exception as e:
-        print(f"⚠️ Discord notify failed: {e}")
+        logger.warning("Discord notify failed: %s", e)
         return False
 
 

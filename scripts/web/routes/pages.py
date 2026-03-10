@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse
+from fastapi import APIRouter, Form, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from web.auth import AUTH_COOKIE, get_auth_token, hash_token, is_auth_enabled
 from web.run_manager import (
     list_runs, get_run, get_dashboard_stats,
     get_node_output, get_node_input,
@@ -23,6 +24,41 @@ router = APIRouter()
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+
+@router.get("/login", response_class=HTMLResponse)
+async def login_page(request: Request, next: str = "/"):
+    if not is_auth_enabled():
+        return RedirectResponse(url=next or "/", status_code=303)
+    return templates.TemplateResponse("login.html", {
+        "request": request,
+        "next": next,
+        "page": "login",
+        "auth_enabled": True,
+    })
+
+
+@router.post("/login")
+async def login_submit(request: Request, password: str = Form(...), next: str = Form("/")):
+    token = get_auth_token()
+    if not token or password != token:
+        return templates.TemplateResponse("login.html", {
+            "request": request,
+            "next": next,
+            "page": "login",
+            "auth_enabled": True,
+            "error": "口令不正确",
+        }, status_code=401)
+    response = RedirectResponse(url=next or "/", status_code=303)
+    response.set_cookie(AUTH_COOKIE, hash_token(token), httponly=True, samesite="lax")
+    return response
+
+
+@router.post("/logout")
+async def logout():
+    response = RedirectResponse(url="/login", status_code=303)
+    response.delete_cookie(AUTH_COOKIE)
+    return response
 
 
 @router.get("/", response_class=HTMLResponse)

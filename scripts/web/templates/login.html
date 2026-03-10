@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ContentPipe 登录</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center p-6">
+  <div class="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 shadow-2xl p-6">
+    <div class="mb-6">
+      <h1 class="text-2xl font-semibold">ContentPipe</h1>
+      <p class="text-sm text-slate-400 mt-1">此实例已开启访问鉴权，请输入访问口令。</p>
+    </div>
+
+    {% if error %}
+    <div class="mb-4 rounded-lg bg-red-950/60 border border-red-800 px-3 py-2 text-sm text-red-300">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/login" class="space-y-4">
+      <input type="hidden" name="next" value="{{ next or '/' }}">
+      <div>
+        <label class="block text-sm text-slate-300 mb-2">访问口令</label>
+        <input type="password" name="password" required autofocus
+               class="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-white outline-none focus:border-sky-500">
+      </div>
+      <button type="submit" class="w-full rounded-lg bg-sky-600 hover:bg-sky-500 px-4 py-2 font-medium text-white">
+        登录
+      </button>
+    </form>
+
+    <div class="mt-4 text-xs text-slate-500">
+      也可以给 API 请求添加请求头：<code class="text-slate-300">X-ContentPipe-Token</code>
+    </div>
+  </div>
+</body>
+</html>

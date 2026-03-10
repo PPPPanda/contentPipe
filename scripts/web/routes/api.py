@@ -8,12 +8,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
+
+from logutil import get_logger
 
 from web.run_manager import (
     list_runs, get_run, create_run, update_run_state, delete_run,
@@ -27,6 +30,12 @@ router = APIRouter()
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
+
+ALLOWED_IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+SAFE_PID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+logger = get_logger(__name__)
 
 
 # ── 健康检查 + 插件信息 ──────────────────────────────────────
@@ -252,7 +261,7 @@ async def api_submit_review(request: Request, run_id: str, background_tasks: Bac
             try:
                 await _sync_chat_to_state(run_id, current_node, raw)
             except Exception as e:
-                print(f"⚠️ Chat sync failed for {current_node}: {e}")
+                logger.warning("Chat sync failed for %s: %s", current_node, e)
     elif action == "revise":
         feedback = form.get("feedback", "")
         raw["review_action"] = "revise"
@@ -424,9 +433,9 @@ async def api_chat(request: Request, run_id: str):
         }
         state_updated = str(old_snapshot) != str(new_snapshot)
         if state_updated:
-            print(f"  ✅ State updated after chat sync for {node_id}")
+            logger.info("State updated after chat sync for %s", node_id)
     except Exception as e:
-        print(f"⚠️ Post-reply sync failed: {e}")
+        logger.warning("Post-reply sync failed: %s", e)
 
     return {"role": "assistant", "content": ai_reply, "state_updated": state_updated}
 
@@ -595,10 +604,20 @@ async def api_preview_html(run_id: str):
 @router.get("/runs/{run_id}/images/{image_name}")
 async def api_get_image(run_id: str, image_name: str):
     """获取生成的图片"""
+    if not SAFE_NAME_RE.match(image_name):
+        raise HTTPException(status_code=400, detail="Invalid image name")
     path = get_run_image_path(run_id, image_name)
     if not path:
         raise HTTPException(status_code=404, detail="Image not found")
-    return FileResponse(path, media_type="image/png")
+    media_type = "image/png"
+    suffix = Path(path).suffix.lower()
+    if suffix in {".jpg", ".jpeg"}:
+        media_type = "image/jpeg"
+    elif suffix == ".webp":
+        media_type = "image/webp"
+    elif suffix == ".gif":
+        media_type = "image/gif"
+    return FileResponse(path, media_type=media_type)
 
 
 # ── 配置 ──────────────────────────────────────────────────────
@@ -624,6 +643,15 @@ async def api_upload_image(run_id: str, request: Request):
     if not state:
         raise HTTPException(status_code=404, detail="Run not found")
 
+    # 轻量安全校验：不影响正常图片替换体验
+    original_name = getattr(image, "filename", "") or "upload.jpg"
+    suffix = Path(original_name).suffix.lower() or ".jpg"
+    content_type = getattr(image, "content_type", "") or ""
+    if suffix not in ALLOWED_IMAGE_EXTS:
+        raise HTTPException(status_code=400, detail=f"Unsupported image type: {suffix}")
+    if content_type and not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Only image uploads are allowed")
+
     # 确定保存路径
     from web.run_manager import OUTPUT_DIR
     images_dir = OUTPUT_DIR / "runs" / run_id / "images"
@@ -631,16 +659,18 @@ async def api_upload_image(run_id: str, request: Request):
 
     # 如果指定了 placement_id，替换该配图
     if not placement_id:
-        # 从已有配图数量推算
         existing = list(images_dir.glob("img_*"))
         idx = len(existing) + 1
         placement_id = f"img_{idx:03d}"
+    elif not SAFE_PID_RE.match(placement_id):
+        raise HTTPException(status_code=400, detail="Invalid placement id")
 
     # 保存文件
-    ext = image.filename.rsplit(".", 1)[-1] if "." in image.filename else "jpg"
-    filename = f"{placement_id}.{ext}"
+    filename = f"{placement_id}{suffix}"
     filepath = images_dir / filename
     content = await image.read()
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=400, detail="Image too large (max 20MB)")
     filepath.write_bytes(content)
 
     # 更新 state 中的 generated_images
@@ -664,6 +694,9 @@ async def api_upload_image(run_id: str, request: Request):
 async def api_delete_placement(run_id: str, pid: str):
     """删除一个配图位置"""
     from web.run_manager import _load_raw_state, _save_state
+
+    if not SAFE_PID_RE.match(pid):
+        raise HTTPException(status_code=400, detail="Invalid placement id")
 
     state = _load_raw_state(run_id)
     if not state:
@@ -815,7 +848,7 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
     if "YES" not in judge_result.upper():
         return
 
-    print(f"  🔄 Chat sync triggered for {node_id} (modification detected)")
+    logger.info("Chat sync triggered for %s (modification detected)", node_id)
 
     recent_chat = "\n".join(
         f"{'用户' if m['role'] == 'user' else 'AI'}: {m['content'][:200]}"
@@ -862,9 +895,9 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
                 state["article_edited"] = new_article
                 _save_state(state)
                 _save_artifact(run_id, "article_edited.md", new_article)
-                print(f"  ✅ Article sync complete ({len(new_article)} chars)")
+                logger.info("Article sync complete (%s chars)", len(new_article))
         except Exception as e:
-            print(f"  ⚠️ Article sync failed: {e}")
+            logger.warning("Article sync failed: %s", e)
         return
 
     # ── Step 2b: YAML 节点 — 同步结构化数据 ──
@@ -911,7 +944,7 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
             if f in updated and updated[f] != state.get(f):
                 state[f] = updated[f]
                 changed = True
-                print(f"  📝 Chat sync: updated state['{f}']")
+                logger.info("Chat sync updated state[%s]", f)
 
         if changed:
             _save_state(state)
@@ -923,9 +956,9 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
                 _save_artifact(run_id, "research.yaml",
                     _yaml.dump({f: state[f] for f in fields if f in state},
                                allow_unicode=True, default_flow_style=False))
-            print(f"  ✅ Chat sync complete for {node_id}")
+            logger.info("Chat sync complete for %s", node_id)
     except Exception as e:
-        print(f"  ⚠️ Chat sync parse failed: {e}")
+        logger.warning("Chat sync parse failed: %s", e)
 
 
 # ── 内部函数 ──────────────────────────────────────────────────

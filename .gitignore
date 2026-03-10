@@ -23,6 +23,7 @@ Thumbs.db
 # Secrets / local config
 .env
 .env.*
+!.env.example
 settings.local.yaml
 
 # Build artifacts
