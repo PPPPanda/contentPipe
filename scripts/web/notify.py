@@ -14,6 +14,7 @@ from typing import Optional
 # 配置（可被环境变量覆盖）
 GATEWAY_URL = os.environ.get("OPENCLAW_GATEWAY_URL", "http://localhost:18789")
 NOTIFY_CHANNEL = os.environ.get("CONTENTPIPE_NOTIFY_CHANNEL", "")
+PUBLIC_BASE_URL = os.environ.get("CONTENTPIPE_PUBLIC_BASE_URL", "http://localhost:8765").rstrip("/")
 
 # 节点 emoji
 NODE_EMOJI = {
@@ -76,7 +77,7 @@ async def notify_node_complete(run_id: str, node: str, title: str = "", summary:
         msg += f"\n> {title}"
     if summary:
         msg += f"\n{summary[:200]}"
-    msg += f"\n🔗 审核: http://localhost:8765/runs/{run_id}/review?node={node}"
+    msg += f"\n🔗 审核: {PUBLIC_BASE_URL}/runs/{run_id}/review?node={node}"
     await notify_discord(msg, run_id=run_id, node=node)
 
 
@@ -86,7 +87,7 @@ async def notify_review_needed(run_id: str, node: str, output_summary: str = "")
     msg = f"⏸️ **{emoji} {node} 等待审核**"
     if output_summary:
         msg += f"\n{output_summary[:300]}"
-    msg += f"\n\n👉 http://localhost:8765/runs/{run_id}/review?node={node}"
+    msg += f"\n\n👉 {PUBLIC_BASE_URL}/runs/{run_id}/review?node={node}"
     await notify_discord(msg, run_id=run_id, node=node, buttons=True)
 
 
@@ -95,7 +96,7 @@ async def notify_run_complete(run_id: str, title: str = ""):
     msg = f"✅ **Pipeline 完成**"
     if title:
         msg += f": {title}"
-    msg += f"\n📱 预览: http://localhost:8765/runs/{run_id}/preview"
+    msg += f"\n📱 预览: {PUBLIC_BASE_URL}/runs/{run_id}/preview"
     await notify_discord(msg, run_id=run_id)
 
 
@@ -104,5 +105,5 @@ async def notify_run_failed(run_id: str, error: str = ""):
     msg = f"❌ **Pipeline 失败**"
     if error:
         msg += f"\n```{error[:200]}```"
-    msg += f"\n🔗 http://localhost:8765/runs/{run_id}"
+    msg += f"\n🔗 {PUBLIC_BASE_URL}/runs/{run_id}"
     await notify_discord(msg, run_id=run_id)

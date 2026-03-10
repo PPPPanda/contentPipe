@@ -197,6 +197,7 @@ OPENCLAW_GATEWAY_URL=http://localhost:18789
 CONTENTPIPE_PORT=8765
 CONTENTPIPE_HOST=0.0.0.0
 CONTENTPIPE_NOTIFY_CHANNEL=<discord_channel_id>
+CONTENTPIPE_PUBLIC_BASE_URL=http://localhost:8765
 
 WECHAT_APPID=...
 WECHAT_SECRET=...
@@ -207,6 +208,7 @@ ANTHROPIC_API_KEY=...
 
 说明：
 - `CONTENTPIPE_NOTIFY_CHANNEL` 为空时，不会发送 Discord 通知
+- `CONTENTPIPE_PUBLIC_BASE_URL` 用于 Discord 通知里的回链地址
 - 发布相关密钥建议只通过环境变量或本地未跟踪配置注入
 
 ---

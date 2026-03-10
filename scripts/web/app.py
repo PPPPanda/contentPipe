@@ -29,7 +29,7 @@ from web.routes.sse import router as sse_router
 app = FastAPI(
     title="ContentPipe Console",
     description="图文内容 Pipeline 主控台",
-    version="0.2.0",
+    version="0.7.0",
 )
 
 # 静态文件
