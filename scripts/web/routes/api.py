@@ -442,31 +442,74 @@ async def api_chat(request: Request, run_id: str):
 
 @router.post("/runs/{run_id}/nodes/{node_id}/rerun")
 async def api_rerun_node(request: Request, run_id: str, node_id: str, background_tasks: BackgroundTasks):
-    """重新执行指定节点（用于用户给了新方向后重跑）"""
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-    user_direction = body.get("direction", "")
-
+    """丢弃当前节点成果与 session，回退到上一个可审核节点继续聊天修改。"""
     raw = _load_raw_state(run_id)
     if not raw:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    # 保存用户指令到 state，节点可以读取
-    if user_direction:
-        raw.setdefault("user_directions", {})[node_id] = user_direction
+    interactive_nodes = ["scout", "researcher", "writer", "director", "formatter"]
+    if node_id not in interactive_nodes:
+        raise HTTPException(status_code=400, detail=f"Node does not support rollback: {node_id}")
 
-    # 回退到该节点重新执行
-    from web.run_manager import PIPELINE_NODES
-    node_ids = [n["id"] for n in PIPELINE_NODES]
-    if node_id in node_ids:
-        idx = node_ids.index(node_id)
-        raw["current_stage"] = node_id
-        raw.pop("_node_done", None)
-        raw["status"] = "running"
-        _save_state(raw)
-        background_tasks.add_task(_execute_pipeline, run_id)
-        return {"ok": True, "message": f"Re-running {node_id}"}
+    idx = interactive_nodes.index(node_id)
+    if idx == 0:
+        raise HTTPException(status_code=400, detail="Current node has no previous review node")
 
-    raise HTTPException(status_code=400, detail=f"Unknown node: {node_id}")
+    prev_node = interactive_nodes[idx - 1]
+
+    # 1) 丢弃当前节点 session
+    run_dir = Path(__file__).parent.parent.parent / "output" / "runs" / run_id
+    chat_file = run_dir / f"chat_{node_id}.json"
+    if chat_file.exists():
+        chat_file.unlink()
+
+    # 2) 丢弃当前节点的 state / 产物（只清当前节点，不动上一个节点）
+    state_cleanup = {
+        "scout": ["topic", "writer_brief", "handoff_to_researcher", "reference_articles", "user_requirements", "reference_index", "link_usage_policy", "scout_process_summary"],
+        "researcher": ["research", "writer_packet", "verification_results", "evidence_backed_insights", "open_issues"],
+        "writer": ["article", "article_edited", "writer_context"],
+        "director": ["visual_plan", "image_candidates", "selected_images"],
+        "formatter": ["formatted_html"],
+    }
+    artifact_cleanup = {
+        "scout": ["topic.yaml", "scout_raw.txt"],
+        "researcher": ["research.yaml", "researcher_raw.txt"],
+        "writer": ["writer_context.yaml", "article_draft.md", "article_edited.md"],
+        "director": ["director_raw.txt", "visual_plan.json", "director_refine_raw.txt", "image_candidates.json"],
+        "formatter": ["formatted.html", "content_body.html"],
+    }
+
+    for key in state_cleanup.get(node_id, []):
+        raw.pop(key, None)
+
+    # formatter 回退到 director 时，保留 visual_plan，但清空 formatter 成果；
+    # director 回退到 writer 时，也清掉已经生成/选择的图片，避免后续误用旧图。
+    if node_id == "director":
+        raw.pop("generated_images", None)
+        images_dir = run_dir / "images"
+        if images_dir.exists():
+            import shutil
+            shutil.rmtree(images_dir, ignore_errors=True)
+
+    for filename in artifact_cleanup.get(node_id, []):
+        path = run_dir / filename
+        if path.exists():
+            path.unlink()
+
+    # 3) 回退到上一个可审核节点，保留其已有状态与聊天，继续聊天修改
+    raw["current_stage"] = prev_node
+    raw["status"] = "review"
+    raw["_node_done"] = True  # 审批时跳过重新执行上一个节点，直接往后跑
+    raw["review_action"] = ""
+    raw.pop("user_feedback", None)
+    _save_state(raw)
+
+    return {
+        "ok": True,
+        "message": f"Discarded {node_id} and rolled back to {prev_node}",
+        "redirect_to": f"/runs/{run_id}/review?node={prev_node}",
+        "prev_node": prev_node,
+    }
 
 
 def _build_node_chat_prompt(node_id: str, state: dict) -> str:

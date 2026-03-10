@@ -127,6 +127,14 @@ async def review_page(request: Request, run_id: str, node: str | None = None):
     node_labels = {n["id"]: n for n in PIPELINE_NODES}
     node_info = node_labels.get(stage, {"id": stage, "label": stage, "icon": "⚙️"})
 
+    # 上一个“可聊天/可审核”的节点（用于回退）
+    interactive_nodes = ["scout", "researcher", "writer", "director", "formatter"]
+    prev_review_node = None
+    if stage in interactive_nodes:
+        idx = interactive_nodes.index(stage)
+        if idx > 0:
+            prev_review_node = interactive_nodes[idx - 1]
+
     return templates.TemplateResponse("review_node.html", {
         "request": request,
         "run": run,
@@ -134,6 +142,8 @@ async def review_page(request: Request, run_id: str, node: str | None = None):
         "node_info": node_info,
         "node_output": node_output,
         "is_readonly": is_readonly,
+        "prev_review_node": prev_review_node,
+        "prev_review_info": node_labels.get(prev_review_node) if prev_review_node else None,
         "page": "runs",
     })
 

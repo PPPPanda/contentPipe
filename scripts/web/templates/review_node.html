@@ -335,10 +335,12 @@
                     ✅ 满意，继续下一步
                 </button>
             </form>
+            {% if prev_review_node %}
             <button onclick="rerunNode()"
                     class="w-full px-4 py-2.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 transition text-sm">
-                🔄 按新方向重新执行
+                ↩️ 丢弃当前节点成果，回到「{{ prev_review_info.label }}」
             </button>
+            {% endif %}
         </div>
         {% else %}
         <div class="card p-4 text-center text-slate-500 text-sm">
@@ -591,20 +593,22 @@ async function saveArticle() {
 }
 
 async function rerunNode() {
-    const msgs = chatBox.querySelectorAll('.chat-user');
-    let direction = '';
-    if (msgs.length > 0) direction = msgs[msgs.length - 1].textContent.trim();
-    if (!confirm(`重新执行「{{ node_info.label }}」？\n\n方向: ${direction || '(保持原方向)'}`)) return;
+    if (!confirm(`丢弃「{{ node_info.label }}」当前成果和聊天记录，并回到「{{ prev_review_info.label if prev_review_info else '上一步' }}」继续修改？`)) return;
     try {
-        await fetch(`/api/runs/${runId}/nodes/${nodeId}/rerun`, {
+        const resp = await fetch(`/api/runs/${runId}/nodes/${nodeId}/rerun`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({direction: direction}),
+            body: JSON.stringify({}),
         });
-        appendMsg('assistant', '🔄 正在重新执行…请稍候');
-        setTimeout(() => window.location.reload(), 5000);
+        const data = await resp.json();
+        if (!resp.ok) {
+            appendMsg('assistant', `⚠️ 回退失败: ${data.detail || '未知错误'}`);
+            return;
+        }
+        appendMsg('assistant', `↩️ 已丢弃当前节点，回到 ${data.prev_node}`);
+        window.location.href = data.redirect_to || `/runs/${runId}`;
     } catch(e) {
-        appendMsg('assistant', '⚠️ 重跑失败');
+        appendMsg('assistant', '⚠️ 回退失败');
     }
 }
 </script>
