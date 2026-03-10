@@ -336,10 +336,13 @@
                 </button>
             </form>
             {% if prev_review_node %}
-            <button onclick="rerunNode()"
-                    class="w-full px-4 py-2.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 transition text-sm">
-                ↩️ 丢弃当前节点成果，回到「{{ prev_review_info.label }}」
-            </button>
+            <form method="post" action="/api/runs/{{ run.run_id }}/nodes/{{ stage }}/rerun"
+                  onsubmit="return confirm('丢弃「{{ node_info.label }}」当前成果和聊天记录，并回到「{{ prev_review_info.label }}」继续修改？')">
+                <button type="submit"
+                        class="w-full px-4 py-2.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 transition text-sm">
+                    ↩️ 丢弃当前节点成果，回到「{{ prev_review_info.label }}」
+                </button>
+            </form>
             {% endif %}
         </div>
         {% else %}

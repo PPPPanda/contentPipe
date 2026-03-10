@@ -443,6 +443,8 @@ async def api_chat(request: Request, run_id: str):
 @router.post("/runs/{run_id}/nodes/{node_id}/rerun")
 async def api_rerun_node(request: Request, run_id: str, node_id: str, background_tasks: BackgroundTasks):
     """丢弃当前节点成果与 session，回退到上一个可审核节点继续聊天修改。"""
+    wants_html = not request.headers.get("content-type", "").startswith("application/json")
+
     raw = _load_raw_state(run_id)
     if not raw:
         raise HTTPException(status_code=404, detail="Run not found")
@@ -504,10 +506,17 @@ async def api_rerun_node(request: Request, run_id: str, node_id: str, background
     raw.pop("user_feedback", None)
     _save_state(raw)
 
+    redirect_to = f"/runs/{run_id}/review?node={prev_node}"
+    if wants_html:
+        return HTMLResponse(
+            f'<meta http-equiv="refresh" content="0;url={redirect_to}">',
+            headers={"HX-Redirect": redirect_to},
+        )
+
     return {
         "ok": True,
         "message": f"Discarded {node_id} and rolled back to {prev_node}",
-        "redirect_to": f"/runs/{run_id}/review?node={prev_node}",
+        "redirect_to": redirect_to,
         "prev_node": prev_node,
     }
 
