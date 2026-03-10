@@ -22,6 +22,7 @@ from urllib.parse import quote
 
 import httpx
 
+from gateway_auth import build_contentpipe_session_key
 from .base import ImageEngine, ImageResult
 from logutil import get_logger
 
@@ -157,6 +158,7 @@ def _shorten_prompt(prompt: str, max_len: int = 180) -> str:
             model="anthropic/claude-sonnet-4-6",
             temperature=0.2,
             max_tokens=150,
+            gateway_session_key=build_contentpipe_session_key("helper", "image-prompt", "shorten"),
         )
         short = result.strip().strip('"').strip("'")
         if short and len(short) > 10:
@@ -187,6 +189,7 @@ def _translate_prompt(chinese_prompt: str) -> str:
             model="anthropic/claude-sonnet-4-6",
             temperature=0.3,
             max_tokens=200,
+            gateway_session_key=build_contentpipe_session_key("helper", "image-prompt", "translate"),
         )
         translated = result.strip().strip('"').strip("'")
         if translated and len(translated) > 10:

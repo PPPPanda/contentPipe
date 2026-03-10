@@ -49,35 +49,37 @@ def call_llm(
     max_tokens: int = 4096,
     response_format: str | None = None,
     chat_history: list[dict] | None = None,
+    system_prompt: str | None = None,
+    gateway_session_key: str | None = None,
 ) -> str:
     """
-    调用 LLM
+    调用 LLM。
 
-    支持两种模式:
-    1. gateway: 通过 OpenClaw Gateway 代理（推荐，自动处理认证和 failover）
-    2. direct: 直接调 OpenAI / DashScope / Anthropic API
-
-    根据 pipeline.yaml 中的配置选择模式和默认模型。
+    约定：
+    - 当 `context` 非空时：`prompt` 视为 system/instruction，`context` 视为当前 user message
+    - 当 `context` 为空时：`prompt` 视为当前 user message
     """
     config = load_pipeline_config()
     pipeline_config = config.get("pipeline", {})
     model = model or pipeline_config.get("default_llm", "anthropic/claude-sonnet-4-6")
     llm_mode = pipeline_config.get("llm_mode", "gateway")
 
-    full_prompt = f"{prompt}\n\n---\n\n{context}" if context else prompt
+    user_prompt = context if context else prompt
+    effective_system_prompt = system_prompt if system_prompt is not None else (prompt if context else None)
 
     if llm_mode == "gateway":
         return _call_via_gateway(
             model=model,
-            prompt=full_prompt,
+            prompt=user_prompt,
+            system_prompt=effective_system_prompt,
             temperature=temperature,
             max_tokens=max_tokens,
             response_format=response_format,
             gateway_url=pipeline_config.get("gateway_url", "http://localhost:18789"),
             chat_history=chat_history,
+            gateway_session_key=gateway_session_key,
         )
 
-    # direct 模式：分离 provider 和 model name
     if "/" in model:
         provider, model_name = model.split("/", 1)
     else:
@@ -86,7 +88,8 @@ def call_llm(
     if provider in ("openai", "dashscope"):
         return _call_openai_compatible(
             model_name=model_name,
-            prompt=full_prompt,
+            prompt=user_prompt,
+            system_prompt=effective_system_prompt,
             provider=provider,
             temperature=temperature,
             max_tokens=max_tokens,
@@ -96,9 +99,11 @@ def call_llm(
     elif provider == "anthropic":
         return _call_anthropic(
             model_name=model_name,
-            prompt=full_prompt,
+            prompt=user_prompt,
+            system_prompt=effective_system_prompt,
             temperature=temperature,
             max_tokens=max_tokens,
+            chat_history=chat_history,
         )
     else:
         raise ValueError(f"Unknown provider: {provider}")
@@ -113,15 +118,13 @@ def _call_via_gateway(
     gateway_url: str = "http://localhost:18789",
     chat_history: list[dict] | None = None,
     system_prompt: str | None = None,
+    gateway_session_key: str | None = None,
 ) -> str:
-    """
-    通过 OpenClaw Gateway 调用 LLM
-
-    Gateway 统一处理认证、路由、failover。
-    使用 OpenAI 兼容 API 格式 (/v1/chat/completions)。
-    支持 chat_history 实现多轮对话。
-    """
-    headers = build_gateway_headers()
+    """通过 OpenClaw Gateway 调用 LLM。"""
+    extra_headers = {}
+    if gateway_session_key:
+        extra_headers["X-OpenClaw-Session-Key"] = gateway_session_key
+    headers = build_gateway_headers(extra_headers or None)
 
     messages = []
     if system_prompt:
@@ -142,11 +145,7 @@ def _call_via_gateway(
         body["response_format"] = {"type": "json_object"}
 
     with httpx.Client(timeout=180) as client:
-        resp = client.post(
-            f"{gateway_url}/v1/chat/completions",
-            headers=headers,
-            json=body,
-        )
+        resp = client.post(f"{gateway_url}/v1/chat/completions", headers=headers, json=body)
         resp.raise_for_status()
         data = resp.json()
         return data["choices"][0]["message"]["content"]
@@ -160,6 +159,7 @@ def _call_openai_compatible(
     max_tokens: int = 4096,
     response_format: str | None = None,
     chat_history: list[dict] | None = None,
+    system_prompt: str | None = None,
 ) -> str:
     """OpenAI 兼容格式调用（OpenAI / DashScope）"""
     if provider == "dashscope":
@@ -174,13 +174,13 @@ def _call_openai_compatible(
         "Content-Type": "application/json",
     }
 
-    # 构建 messages（支持多轮对话）
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
     if chat_history:
-        messages = [{"role": "system", "content": prompt}]
         for msg in chat_history:
             messages.append({"role": msg["role"], "content": msg["content"]})
-    else:
-        messages = [{"role": "user", "content": prompt}]
+    messages.append({"role": "user", "content": prompt})
 
     body: dict[str, Any] = {
         "model": model_name,
@@ -192,7 +192,6 @@ def _call_openai_compatible(
     if response_format == "json":
         body["response_format"] = {"type": "json_object"}
 
-    # 国内 API 直连，不走代理
     proxy = None if provider == "dashscope" else os.environ.get("HTTPS_PROXY")
     with httpx.Client(timeout=120, proxy=proxy) as client:
         resp = client.post(f"{base_url}/chat/completions", headers=headers, json=body)
@@ -206,6 +205,8 @@ def _call_anthropic(
     prompt: str,
     temperature: float = 0.7,
     max_tokens: int = 4096,
+    system_prompt: str | None = None,
+    chat_history: list[dict] | None = None,
 ) -> str:
     """Anthropic Claude 调用"""
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
@@ -216,12 +217,20 @@ def _call_anthropic(
         "anthropic-version": "2023-06-01",
     }
 
-    body = {
+    messages = []
+    if chat_history:
+        for msg in chat_history:
+            messages.append({"role": msg["role"], "content": msg["content"]})
+    messages.append({"role": "user", "content": prompt})
+
+    body: dict[str, Any] = {
         "model": model_name,
         "max_tokens": max_tokens,
         "temperature": temperature,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": messages,
     }
+    if system_prompt:
+        body["system"] = system_prompt
 
     with httpx.Client(timeout=120) as client:
         resp = client.post("https://api.anthropic.com/v1/messages", headers=headers, json=body)

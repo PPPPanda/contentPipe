@@ -20,7 +20,7 @@ from pathlib import Path
 import re
 import yaml
 
-from state import ContentState
+from gateway_auth import build_contentpipe_session_key
 from logutil import get_logger
 from state import ContentState
 from tools import call_llm, search_web, search_perplexity, fetch_hotnews, search_social, load_pipeline_config, fetch_wechat_article, is_wechat_url
@@ -102,34 +102,24 @@ def _call_llm_with_session(
     model: str | None = None,
     max_tokens: int = 4096,
 ) -> str:
-    """调用 LLM 并将输入/输出写入节点 session
-
-    1. 将 prompt+context 作为 internal user 消息写入节点 session（前端不可见）
-    2. 取该节点的 history 传给 LLM
-    3. 将 LLM 回复写入节点 session（internal，前端不可见）
-    4. 返回 LLM 回复
-
-    节点执行的消息标记 internal=True，审核聊天不会在对话框中看到这些。
-    但 LLM 调用时完整 history 会传入，保证连续性。
-    """
-    # 写入节点 session（internal，前端不展示）
+    """调用 LLM 并将输入/输出写入节点 session。"""
     _append_node_session(state, node_id, "user", context, tag=f"{node_id}_exec", internal=True)
 
-    # 获取该节点完整 history（最近 20 条）
     history = _get_node_history(state, node_id)
     recent = [{"role": m["role"], "content": m["content"]} for m in history[:-1]][-20:]
 
-    # 调用 LLM（prompt 作为 system，context 已在 history 里）
+    gateway_session_key = build_contentpipe_session_key(state["run_id"], node_id, "main")
     result = call_llm(
-        prompt, context,
+        prompt,
+        context,
         model=model,
         max_tokens=max_tokens,
         chat_history=recent,
+        system_prompt=prompt,
+        gateway_session_key=gateway_session_key,
     )
 
-    # 将回复写入节点 session（internal）
     _append_node_session(state, node_id, "assistant", result, tag=f"{node_id}_exec", internal=True)
-
     return result
 
 

@@ -38,3 +38,13 @@ def build_gateway_headers(extra: dict[str, Any] | None = None) -> dict[str, str]
     if extra:
         headers.update({k: str(v) for k, v in extra.items()})
     return headers
+
+
+def build_contentpipe_session_key(*parts: str) -> str:
+    """构造稳定、可读的 Gateway session key。"""
+    cleaned = []
+    for part in parts:
+        p = (part or "").strip().replace(" ", "-").replace(":", "-").replace("/", "-")
+        if p:
+            cleaned.append(p)
+    return "contentpipe:" + ":".join(cleaned)

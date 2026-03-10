@@ -16,6 +16,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
+from gateway_auth import build_contentpipe_session_key
 from logutil import get_logger
 
 from web.run_manager import (
@@ -399,9 +400,12 @@ async def api_chat(request: Request, run_id: str):
         ai_reply = await loop.run_in_executor(
             None,
             lambda: call_llm(
-                system_prompt, user_msg,
+                system_prompt,
+                user_msg,
                 model=chat_model,
                 chat_history=recent,
+                system_prompt=system_prompt,
+                gateway_session_key=build_contentpipe_session_key(run_id, node_id, "main"),
             )
         )
     except Exception as e:
@@ -894,6 +898,7 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
             f"用户消息: {last_user}\nAI回复: {last_ai}\n\n{judge_q}\n只输出 YES 或 NO：",
             model="dashscope/qwen3.5-flash",
             max_tokens=10,
+            gateway_session_key=build_contentpipe_session_key(run_id, node_id, "judge"),
         )
     )
 
@@ -937,6 +942,7 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
 输出修改后的完整文章：""",
                 model=writer_model,
                 max_tokens=8192,
+                gateway_session_key=build_contentpipe_session_key(run_id, node_id, "article-sync"),
             )
         )
 
@@ -982,6 +988,7 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
 
 输出更新后的完整 YAML：""",
             model="dashscope/qwen3.5-flash",
+            gateway_session_key=build_contentpipe_session_key(run_id, node_id, "yaml-sync"),
         )
     )
 
