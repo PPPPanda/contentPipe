@@ -23,6 +23,9 @@ from urllib.parse import quote
 import httpx
 
 from .base import ImageEngine, ImageResult
+from logutil import get_logger
+
+logger = get_logger(__name__)
 
 
 class PollinationsEngine(ImageEngine):
@@ -187,7 +190,7 @@ def _translate_prompt(chinese_prompt: str) -> str:
         if translated and len(translated) > 10:
             return translated
     except Exception as e:
-        print(f"  ⚠️ Prompt translation failed: {e}")
+        logger.warning("Prompt translation failed: %s", e)
 
     # Fallback: 原样返回（Pollinations 也能处理部分中文）
     return chinese_prompt

@@ -19,8 +19,12 @@ from pathlib import Path
 import httpx
 import yaml
 
+from logutil import get_logger
+
 
 DEFAULT_OUTPUT_BASE = Path(__file__).parent.parent.parent.parent / "work" / "content-pipeline" / "output" / "runs"
+
+logger = get_logger(__name__)
 
 
 # ── 微信 API ─────────────────────────────────────────────────
@@ -75,7 +79,7 @@ def publish_wechat(output_dir: Path) -> dict:
     secret = os.environ.get("WECHAT_SECRET", "")
 
     if not appid or not secret:
-        print("⚠️  WECHAT_APPID/WECHAT_SECRET 未配置，跳过发布")
+        logger.warning("WECHAT_APPID/WECHAT_SECRET 未配置，跳过发布")
         return {"platform": "wechat", "status": "local_only", "note": "凭证未配置"}
 
     html_path = output_dir / "formatted.html"
@@ -85,7 +89,7 @@ def publish_wechat(output_dir: Path) -> dict:
 
     try:
         token = wechat_get_token(appid, secret)
-        print(f"🔑 WeChat token obtained")
+        logger.info("WeChat token obtained")
 
         # 上传图片到 CDN
         selected = state.get("selected_images", {})
@@ -98,7 +102,7 @@ def publish_wechat(output_dir: Path) -> dict:
                         cdn_url = wechat_upload_image(token, open(fpath, "rb").read(), f"{pid}.png")
                         local_url = f"/api/runs/{run_id}/images/{os.path.basename(fpath)}"
                         html = html.replace(local_url, cdn_url)
-                        print(f"☁️  {pid} → {cdn_url[:50]}...")
+                        logger.info("%s -> %s...", pid, cdn_url[:50])
                     break
 
         media_id = wechat_create_draft(token, {
@@ -106,11 +110,11 @@ def publish_wechat(output_dir: Path) -> dict:
             "content_html": html,
             "subtitle": article.get("subtitle", ""),
         })
-        print(f"✅ Draft created: {media_id}")
+        logger.info("Draft created: %s", media_id)
         return {"platform": "wechat", "status": "draft", "media_id": media_id}
 
     except Exception as e:
-        print(f"❌ {e}")
+        logger.error("%s", e)
         return {"platform": "wechat", "status": "failed", "error": str(e)}
 
 
@@ -126,7 +130,7 @@ def publish_xhs(output_dir: Path) -> dict:
         "images": [img.get("file_path", "") for img in state.get("generated_images", []) if img.get("success")],
     }
     (output_dir / "xhs_content.json").write_text(json.dumps(content, ensure_ascii=False, indent=2), encoding="utf-8")
-    print("📝 XHS content saved to xhs_content.json")
+    logger.info("XHS content saved to xhs_content.json")
     return {"platform": "xhs", "status": "local_only"}
 
 
@@ -147,4 +151,4 @@ if __name__ == "__main__":
         result = {"error": f"Unknown platform: {args.platform}"}
 
     (output_dir / "publish_result.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    logger.info(json.dumps(result, ensure_ascii=False, indent=2))

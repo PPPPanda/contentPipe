@@ -16,10 +16,14 @@ from typing import Any
 import httpx
 import yaml
 
+from logutil import get_logger
+
 # ── 自动加载 API keys ────────────────────────────────────────
 
 from env_loader import load_keys_from_openclaw
 _loaded_keys = load_keys_from_openclaw()
+
+logger = get_logger(__name__)
 
 # ── 配置 ──────────────────────────────────────────────────────
 
@@ -343,7 +347,7 @@ def search_social(query: str, platforms: list[str] | None = None) -> dict[str, l
             if items:
                 results[plat] = items
         except Exception as e:
-            print(f"  ⚠️ {plat} 搜索失败: {e}")
+            logger.warning("%s 搜索失败: %s", plat, e)
             results[plat] = []
 
     return results
@@ -365,7 +369,7 @@ def _search_platform(platform: str, query: str) -> list[dict]:
             if r.returncode == 0 and r.stdout.strip():
                 # 检查是否是认证失败
                 if "Not authenticated" in r.stdout or "Not authenticated" in r.stderr:
-                    print("  ⚠️ Twitter 未认证，跳过")
+                    logger.warning("Twitter 未认证，跳过")
                     return []
                 data = json.loads(r.stdout)
                 items = data if isinstance(data, list) else data.get("tweets", data.get("results", []))
@@ -380,7 +384,7 @@ def _search_platform(platform: str, query: str) -> list[dict]:
                     for t in items[:10]
                 ]
             elif "Not authenticated" in (r.stderr or ""):
-                print("  ⚠️ Twitter 未认证，跳过")
+                logger.warning("Twitter 未认证，跳过")
                 return []
         except (FileNotFoundError, subprocess.TimeoutExpired):
             pass
@@ -563,7 +567,7 @@ def fetch_hotnews() -> dict[str, list[dict]]:
                                 "heat": item.get("hotScore", item.get("index", 0)),
                             })
     except Exception as e:
-        print(f"  ⚠️ 百度热搜失败: {e}")
+        logger.warning("百度热搜失败: %s", e)
 
     # ── 微博热搜 ──
     try:
@@ -583,7 +587,7 @@ def fetch_hotnews() -> dict[str, list[dict]]:
                             "label": item.get("label_name", ""),
                         })
     except Exception as e:
-        print(f"  ⚠️ 微博热搜失败: {e}")
+        logger.warning("微博热搜失败: %s", e)
 
     # ── 知乎热榜 ──
     try:
@@ -611,11 +615,11 @@ def fetch_hotnews() -> dict[str, list[dict]]:
                             "excerpt": target.get("excerpt", "")[:100],
                         })
     except Exception as e:
-        print(f"  ⚠️ 知乎热榜失败: {e}")
+        logger.warning("知乎热榜失败: %s", e)
 
     # ── Jina Reader 兜底 (抓取综合热搜) ──
     if not any(results[k] for k in ["weibo", "baidu", "zhihu"]):
-        print("  ℹ️ 主要热搜源均失败，尝试 Jina Reader 兜底...")
+        logger.info("主要热搜源均失败，尝试 Jina Reader 兜底...")
         try:
             with httpx.Client(timeout=15) as client:
                 resp = client.get(
@@ -638,7 +642,7 @@ def fetch_hotnews() -> dict[str, list[dict]]:
                                     "platform": "jina_fallback",
                                 })
         except Exception as e:
-            print(f"  ⚠️ Jina 兜底也失败: {e}")
+            logger.warning("Jina 兜底也失败: %s", e)
 
     # ── 统计 ──
     total = sum(len(v) for v in results.values())
@@ -646,7 +650,7 @@ def fetch_hotnews() -> dict[str, list[dict]]:
     for k, v in results.items():
         if v:
             sources.append(f"{k} {len(v)}")
-    print(f"  🔥 热搜抓取: {total} 条 ({', '.join(sources) or '全部失败'})")
+    logger.info("热搜抓取: %s 条 (%s)", total, ", ".join(sources) or "全部失败")
 
     return results
 

@@ -21,7 +21,11 @@ import re
 import yaml
 
 from state import ContentState
+from logutil import get_logger
+from state import ContentState
 from tools import call_llm, search_web, search_perplexity, fetch_hotnews, search_social, load_pipeline_config, fetch_wechat_article, is_wechat_url
+
+logger = get_logger(__name__)
 
 
 def _strip_code_fence(text: str) -> str:
@@ -145,7 +149,7 @@ def scout_node(state: ContentState) -> ContentState:
     for url in urls_in_topic:
         url = url.rstrip(",.;，。；")
         if is_wechat_url(url):
-            print(f"  📖 Scout: 提取参考文章 {url[:60]}...")
+            logger.info("Scout 提取参考文章: %s...", url[:60])
             result = fetch_wechat_article(url)
             if result.get("success"):
                 wechat_refs.append({
@@ -155,22 +159,22 @@ def scout_node(state: ContentState) -> ContentState:
                     "content": result.get("content", "")[:3000],
                     "word_count": result.get("word_count", 0),
                 })
-                print(f"    ✅ {result.get('title', '?')} ({result.get('word_count', 0)} 字)")
+                logger.info("提取成功: %s (%s 字)", result.get("title", "?"), result.get("word_count", 0))
             else:
-                print(f"    ❌ {result.get('error', '?')}")
+                logger.error("提取失败: %s", result.get("error", "?"))
 
     # 1. 获取多平台热搜
-    print("  🔥 获取多平台热搜...")
+    logger.info("获取多平台热搜...")
     hotnews = fetch_hotnews()
 
     # 2. Brave Search 网络搜索
     search_query = user_topic if user_topic else "近期热门话题 AI 科技 2026"
-    print(f"  🔍 Brave Search: {search_query[:40]}...")
+    logger.info("Brave Search: %s...", search_query[:40])
     web_results = search_web(search_query, count=10)
 
     # 3. 🆕 社交平台搜索（agent-reach）
     social_query = user_topic if user_topic else "AI 一人公司 Agent"
-    print(f"  📱 社交平台搜索: {social_query[:40]}...")
+    logger.info("社交平台搜索: %s...", social_query[:40])
     social_results = search_social(social_query, platforms=["twitter", "xiaohongshu"])
 
     # 4. 组装上下文
@@ -271,7 +275,7 @@ def researcher_node(state: ContentState) -> ContentState:
     for vt in verification_targets[:3]:  # 最多搜 3 个
         claim = vt.get("claim_text", "")
         if claim:
-            print(f"  🔍 核查: {claim[:40]}...")
+            logger.info("核查: %s...", claim[:40])
             extra = search_web(claim, count=3)
             web_results.extend(extra)
 
@@ -286,7 +290,7 @@ def researcher_node(state: ContentState) -> ContentState:
     all_urls += topic.get("reference_urls", [])
     for url in all_urls:
         if is_wechat_url(url):
-            print(f"  📖 提取微信文章: {url[:60]}...")
+            logger.info("提取微信文章: %s...", url[:60])
             result = fetch_wechat_article(url)
             if result.get("success"):
                 wechat_articles.append({
@@ -296,13 +300,13 @@ def researcher_node(state: ContentState) -> ContentState:
                     "content": result.get("content", "")[:3000],
                     "word_count": result.get("word_count", 0),
                 })
-                print(f"    ✅ {result.get('title', '?')} ({result.get('word_count', 0)} 字)")
+                logger.info("提取成功: %s (%s 字)", result.get("title", "?"), result.get("word_count", 0))
             else:
-                print(f"    ❌ 提取失败: {result.get('error', '?')}")
+                logger.error("提取失败: %s", result.get("error", "?"))
 
     # 5. 社交平台深度搜索（agent-reach）
     social_query = f"{title} {' '.join(keywords[:2]) if keywords else ''}"
-    print(f"  📱 社交平台深度搜索: {social_query[:40]}...")
+    logger.info("社交平台深度搜索: %s...", social_query[:40])
     social_results = search_social(social_query, platforms=["twitter", "xiaohongshu", "bilibili"])
 
     # 6. 组装上下文
@@ -522,7 +526,7 @@ def writer_node(state: ContentState) -> ContentState:
     _save_artifact(state["run_id"], "article_draft.md", content)
 
     # ── 自动去 AI 味（用 Sonnet 4.6，独立 session）──
-    print("  🔧 自动去 AI 味（Sonnet 4.6）...")
+    logger.info("自动去 AI 味（Sonnet 4.6）...")
     de_ai_prompt = _read_prompt("de-ai-engine.md")
     de_ai_context_parts = [
         f"平台: {state.get('platform', 'wechat')}",
@@ -682,7 +686,7 @@ def image_gen_node(state: ContentState) -> ContentState:
     img_dir.mkdir(parents=True, exist_ok=True)
 
     engine = create_engine_from_config()
-    print(f"  🎨 Image engine: {engine}")
+    logger.info("Image engine: %s", engine)
 
     # 宽高映射
     aspect_map = {
@@ -701,7 +705,7 @@ def image_gen_node(state: ContentState) -> ContentState:
         # 用户提供了图片 URL → 直接下载
         user_url = placement.get("user_image_url", "")
         if user_url:
-            print(f"    📥 {pid}: downloading user image...")
+            logger.info("%s: downloading user image...", pid)
             try:
                 import httpx
                 resp = httpx.get(user_url, timeout=30, follow_redirects=True)
@@ -712,14 +716,14 @@ def image_gen_node(state: ContentState) -> ContentState:
                     "engine": "user_provided", "success": True,
                     "generation_time_ms": 0, "error": "",
                 })
-                print(f"    ✅ {pid}: user image saved")
+                logger.info("%s: user image saved", pid)
                 continue
             except Exception as e:
-                print(f"    ⚠️ {pid}: download failed ({e}), falling back to generation")
+                logger.warning("%s: download failed (%s), falling back to generation", pid, e)
 
         # AI 生成
         prompt_text = f"{desc}. {purpose}" if purpose else desc
-        print(f"    🖼️ {pid}: generating ({len(prompt_text)} chars)...")
+        logger.info("%s: generating (%s chars)...", pid, len(prompt_text))
 
         result = engine.generate(
             prompt=prompt_text,
@@ -740,9 +744,9 @@ def image_gen_node(state: ContentState) -> ContentState:
         })
 
         if result.success:
-            print(f"    ✅ {pid} done ({result.generation_time_ms}ms)")
+            logger.info("%s done (%sms)", pid, result.generation_time_ms)
         else:
-            print(f"    ❌ {pid} failed: {result.error}")
+            logger.error("%s failed: %s", pid, result.error)
 
     state["generated_images"] = generated
     # 自动构建 selected_images（每个 placement 直接选中唯一的图）
@@ -832,7 +836,7 @@ def formatter_node(state: ContentState) -> ContentState:
     _save_artifact(run_id, "formatted.html", html)
     _save_artifact(run_id, "content_body.html", content_html)
     _save_state(state)
-    print(f"  📐 Formatted: {len(html)} chars, {len(image_map)} images inserted")
+    logger.info("Formatted: %s chars, %s images inserted", len(html), len(image_map))
     return state
 
 
@@ -868,11 +872,11 @@ def publisher_node(state: ContentState) -> ContentState:
     _save_state(state)
 
     status = result.get("status", "?")
-    print(f"  📤 Published: platform={platform}, status={status}")
+    logger.info("Published: platform=%s, status=%s", platform, status)
     if result.get("media_id"):
-        print(f"     media_id: {result['media_id']}")
+        logger.info("media_id: %s", result["media_id"])
     if result.get("error"):
-        print(f"     ⚠️  {result['error']}")
+        logger.warning("publish warning: %s", result["error"])
 
     return state
 
@@ -1183,7 +1187,7 @@ def _publish_wechat(state: dict, config: dict) -> dict:
 
     # 未配置微信凭证，仅本地保存
     if not app_id or not app_secret:
-        print("  ⚠️  微信 AppID/AppSecret 未配置，跳过实际发布")
+        logger.warning("微信 AppID/AppSecret 未配置，跳过实际发布")
         return {
             "platform": "wechat",
             "status": "local_only",
@@ -1195,7 +1199,7 @@ def _publish_wechat(state: dict, config: dict) -> dict:
     try:
         # 1. 获取 access_token
         token = wechat_get_token(app_id, app_secret)
-        print(f"  🔑 WeChat token obtained")
+        logger.info("WeChat token obtained")
 
         # 2. 上传配图到微信 CDN
         html = state.get("formatted_html", "")
@@ -1214,7 +1218,7 @@ def _publish_wechat(state: dict, config: dict) -> dict:
                         # 替换本地路径为 CDN URL
                         local_url = f"/api/runs/{run_id}/images/{pid}_{option}.png"
                         cdn_replacements[local_url] = cdn_url
-                        print(f"  ☁️  Uploaded {pid}_{option} → {cdn_url[:60]}...")
+                        logger.info("Uploaded %s_%s -> %s...", pid, option, cdn_url[:60])
                     break
 
         # 替换 HTML 中的图片路径
@@ -1240,7 +1244,7 @@ def _publish_wechat(state: dict, config: dict) -> dict:
         }
 
     except Exception as e:
-        print(f"  ❌ WeChat publish failed: {e}")
+        logger.error("WeChat publish failed: %s", e)
         return {
             "platform": "wechat",
             "status": "failed",

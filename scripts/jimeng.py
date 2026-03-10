@@ -16,8 +16,12 @@ from typing import Any
 
 import httpx
 
+from logutil import get_logger
+
 GATEWAY_URL = "http://localhost:18789"
 JIMENG_TAB_ID = "633824CAA4F7CEFB0C523AFB972A9E08"  # 默认即梦 tab
+
+logger = get_logger(__name__)
 
 
 def _browser_action(action: str, **kwargs) -> dict:
@@ -139,11 +143,11 @@ def get_highres_url(thumbnail_url: str, size: int = 2048) -> str:
 if __name__ == "__main__":
     import sys
     prompt = sys.argv[1] if len(sys.argv) > 1 else "一只可爱的卡通猫咪在花园里玩耍"
-    print(f"Prompt: {prompt}")
+    logger.info("Prompt: %s", prompt)
     try:
         urls = generate_images(prompt)
-        print(f"✅ 生成 {len(urls)} 张图片:")
+        logger.info("生成 %s 张图片", len(urls))
         for i, url in enumerate(urls):
-            print(f"  [{i+1}] {url[:100]}...")
+            logger.info("[%s] %s...", i+1, url[:100])
     except Exception as e:
-        print(f"❌ {e}")
+        logger.error("%s", e)

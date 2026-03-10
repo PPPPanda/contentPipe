@@ -11,6 +11,10 @@ import json
 import os
 from pathlib import Path
 
+from logutil import get_logger
+
+
+logger = get_logger(__name__)
 
 OPENCLAW_CONFIG_PATHS = [
     Path.home() / ".clawdbot" / "openclaw.json",
@@ -82,8 +86,8 @@ def load_keys_from_openclaw() -> dict[str, str]:
 if __name__ == "__main__":
     keys = load_keys_from_openclaw()
     if keys:
-        print(f"✅ 从 OpenClaw 加载了 {len(keys)} 个 API keys:")
+        logger.info("从 OpenClaw 加载了 %s 个 API keys", len(keys))
         for k, v in keys.items():
-            print(f"  {k} = {v}")
+            logger.info("%s = %s", k, v)
     else:
-        print("❌ 未找到 OpenClaw 配置或无可用 keys")
+        logger.warning("未找到 OpenClaw 配置或无可用 keys")

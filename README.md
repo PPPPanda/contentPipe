@@ -255,6 +255,55 @@ curl http://localhost:8765/api/health
 curl http://localhost:8765/api/info
 ```
 
+### 6.5 生产部署 / 反向代理 / HTTPS
+
+如果你要把它部署给别人使用，推荐的最小方案是：
+
+1. ContentPipe 只监听内网或 Docker 网络
+2. 用 Nginx / Caddy 做反向代理
+3. 打开 `CONTENTPIPE_AUTH_TOKEN`
+4. 通过 HTTPS 暴露外部访问
+5. 把 `CONTENTPIPE_PUBLIC_BASE_URL` 设成最终对外域名
+
+示例（Nginx）：
+
+```nginx
+server {
+    listen 80;
+    server_name contentpipe.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name contentpipe.example.com;
+
+    ssl_certificate     /path/to/fullchain.pem;
+    ssl_certificate_key /path/to/privkey.pem;
+
+    client_max_body_size 25m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8765;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+```
+
+对应 `.env` 建议：
+
+```bash
+CONTENTPIPE_AUTH_TOKEN=change-me
+CONTENTPIPE_PUBLIC_BASE_URL=https://contentpipe.example.com
+OPENCLAW_GATEWAY_URL=http://host.docker.internal:18789
+```
+
+如果只在本机使用，可以不配反代和 HTTPS；但**只要要给别人访问，就建议必须开 HTTPS + 鉴权**。
+
 ---
 
 ## 7. Web UI

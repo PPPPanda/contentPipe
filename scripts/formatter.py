@@ -22,6 +22,10 @@ from pathlib import Path
 import jinja2
 import yaml
 
+from logutil import get_logger
+
+logger = get_logger(__name__)
+
 
 SKILL_DIR = Path(__file__).parent.parent
 CONFIG_DIR = SKILL_DIR / "config"
@@ -417,7 +421,7 @@ def format_article(run_id: str, output_dir: Path, platform: str = "wechat") -> s
     (output_dir / "formatted.html").write_text(html, encoding="utf-8")
     (output_dir / "content_body.html").write_text(content_html, encoding="utf-8")
 
-    print(f"📐 Formatted: {len(html)} chars, {len(image_map)} images, template={template_name}")
+    logger.info("Formatted: %s chars, %s images, template=%s", len(html), len(image_map), template_name)
     return html
 
 
@@ -434,7 +438,7 @@ if __name__ == "__main__":
         output_dir = DEFAULT_OUTPUT_BASE / args.run_id
 
     if not output_dir.exists():
-        print(f"❌ Output dir not found: {output_dir}", file=sys.stderr)
+        logger.error("Output dir not found: %s", output_dir)
         sys.exit(1)
 
     format_article(args.run_id, output_dir, args.platform)

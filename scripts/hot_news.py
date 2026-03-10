@@ -24,6 +24,10 @@ import subprocess
 import sys
 from typing import Any
 
+from logutil import get_logger
+
+logger = get_logger(__name__)
+
 import httpx
 
 HEADERS = {
@@ -54,7 +58,7 @@ def fetch_baidu(top: int = 30) -> list[dict]:
                 for i, it in enumerate(items[:top]) if isinstance(it, dict) and it.get("word")
             ]
     except Exception as e:
-        print(f"⚠️ 百度: {e}", file=sys.stderr)
+        logger.warning("百度: %s", e)
         return []
 
 
@@ -98,12 +102,12 @@ def fetch_twitter(top: int = 15, keywords: list[str] | None = None) -> list[dict
                     "retweets": tweet.get("retweet_count", 0),
                 })
         except FileNotFoundError:
-            print("⚠️ xreach 未安装，跳过 Twitter", file=sys.stderr)
+            logger.warning("xreach 未安装，跳过 Twitter")
             return results
         except subprocess.TimeoutExpired:
-            print(f"⚠️ xreach 超时: {query}", file=sys.stderr)
+            logger.warning("xreach 超时: %s", query)
         except Exception as e:
-            print(f"⚠️ Twitter ({query}): {e}", file=sys.stderr)
+            logger.warning("Twitter (%s): %s", query, e)
 
     # 去重
     seen = set()
@@ -137,7 +141,7 @@ def fetch_weibo(top: int = 20) -> list[dict]:
                 if it.get("word")
             ]
     except Exception as e:
-        print(f"⚠️ 微博: {e}", file=sys.stderr)
+        logger.warning("微博: %s", e)
         return []
 
 
@@ -168,7 +172,7 @@ def fetch_zhihu(top: int = 20) -> list[dict]:
                 })
             return results
     except Exception as e:
-        print(f"⚠️ 知乎: {e}", file=sys.stderr)
+        logger.warning("知乎: %s", e)
         return []
 
 
@@ -198,7 +202,7 @@ def fetch_via_jina(url: str, platform: str = "jina") -> list[dict]:
                     })
             return results
     except Exception as e:
-        print(f"⚠️ Jina ({url}): {e}", file=sys.stderr)
+        logger.warning("Jina (%s): %s", url, e)
         return []
 
 
@@ -242,7 +246,7 @@ def fetch_tophub(board_id: str, platform_name: str, top: int = 30) -> list[dict]
                     results[-1]["heat"] = int(hm.group(1)) * 10000
             return results
     except Exception as e:
-        print(f"⚠️ tophub ({platform_name}): {e}", file=sys.stderr)
+        logger.warning("tophub (%s): %s", platform_name, e)
         return []
 
 
@@ -282,7 +286,7 @@ def fetch_all(
 
     total = sum(len(v) for v in results.values())
     parts = [f"{k} {len(v)}" for k, v in results.items() if v]
-    print(f"🔥 热搜: {total} 条 ({', '.join(parts) or '全部失败'})", file=sys.stderr)
+    logger.info("热搜: %s 条 (%s)", total, ", ".join(parts) or "全部失败")
     return results
 
 
