@@ -34,6 +34,7 @@ import subprocess
 from pathlib import Path
 from dataclasses import dataclass, field
 
+from gateway_auth import build_gateway_headers
 from .base import ImageEngine, ImageResult
 
 
@@ -230,7 +231,7 @@ class BrowserEngine(ImageEngine):
         try:
             # 简单检查 gateway 是否响应
             import httpx
-            resp = httpx.get(f"{self.gateway_url}/api/status", timeout=5)
+            resp = httpx.get(f"{self.gateway_url}/api/status", timeout=5, headers=build_gateway_headers())
             return resp.status_code == 200
         except Exception:
             return False
@@ -255,6 +256,7 @@ class BrowserEngine(ImageEngine):
             resp = client.post(
                 f"{self.gateway_url}/api/tools/browser",
                 json=payload,
+                headers=build_gateway_headers(),
             )
             resp.raise_for_status()
             return resp.json()

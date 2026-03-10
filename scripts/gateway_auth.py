@@ -1,0 +1,40 @@
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+_GATEWAY_TOKEN_CACHE: str | None = None
+
+
+def get_gateway_token() -> str:
+    global _GATEWAY_TOKEN_CACHE
+    if _GATEWAY_TOKEN_CACHE is not None:
+        return _GATEWAY_TOKEN_CACHE
+
+    token = os.environ.get("OPENCLAW_GATEWAY_TOKEN", "").strip()
+    if token:
+        _GATEWAY_TOKEN_CACHE = token
+        return token
+
+    cfg_path = Path.home() / ".openclaw" / "openclaw.json"
+    try:
+        if cfg_path.exists():
+            cfg = json.loads(cfg_path.read_text())
+            token = str(cfg.get("gateway", {}).get("auth", {}).get("token", "")).strip()
+    except Exception:
+        token = ""
+
+    _GATEWAY_TOKEN_CACHE = token
+    return token
+
+
+def build_gateway_headers(extra: dict[str, Any] | None = None) -> dict[str, str]:
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    token = get_gateway_token()
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    if extra:
+        headers.update({k: str(v) for k, v in extra.items()})
+    return headers

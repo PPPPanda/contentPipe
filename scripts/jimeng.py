@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 
+from gateway_auth import build_gateway_headers
 from logutil import get_logger
 
 GATEWAY_URL = "http://localhost:18789"
@@ -28,7 +29,7 @@ def _browser_action(action: str, **kwargs) -> dict:
     """调用 OpenClaw Gateway 的 browser tool"""
     payload = {"action": action, "profile": "chrome", **kwargs}
     with httpx.Client(timeout=60) as client:
-        resp = client.post(f"{GATEWAY_URL}/api/tools/browser", json=payload)
+        resp = client.post(f"{GATEWAY_URL}/api/tools/browser", json=payload, headers=build_gateway_headers())
         resp.raise_for_status()
         return resp.json()
 

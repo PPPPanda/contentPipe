@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 import yaml
 
+from gateway_auth import build_gateway_headers
 from logutil import get_logger
 
 # ── 自动加载 API keys ────────────────────────────────────────
@@ -120,9 +121,7 @@ def _call_via_gateway(
     使用 OpenAI 兼容 API 格式 (/v1/chat/completions)。
     支持 chat_history 实现多轮对话。
     """
-    headers = {
-        "Content-Type": "application/json",
-    }
+    headers = build_gateway_headers()
 
     messages = []
     if system_prompt:

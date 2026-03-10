@@ -11,6 +11,7 @@ import json
 import httpx
 from typing import Optional
 
+from gateway_auth import build_gateway_headers
 from logutil import get_logger
 
 # 配置（可被环境变量覆盖）
@@ -64,7 +65,7 @@ async def notify_discord(
             resp = await client.post(
                 f"{GATEWAY_URL}/api/message",
                 json=payload,
-                headers={"Content-Type": "application/json"},
+                headers=build_gateway_headers(),
             )
             return resp.status_code == 200
     except Exception as e:

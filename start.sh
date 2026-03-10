@@ -2,7 +2,8 @@
 # ContentPipe 服务启动脚本
 # 用法: ./start.sh [start|stop|restart|status|logs]
 
-PLUGIN_DIR="$(cd "$(dirname "$0")" && pwd)"
+SCRIPT_PATH="$(readlink -f "$0")"
+PLUGIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
 APP_NAME="contentpipe"
 PORT="${CONTENTPIPE_PORT:-8765}"
 HOST="${CONTENTPIPE_HOST:-0.0.0.0}"
@@ -45,9 +46,9 @@ case "${1:-start}" in
         ;;
     
     restart)
-        "$0" stop
+        "$SCRIPT_PATH" stop
         sleep 1
-        "$0" start
+        "$SCRIPT_PATH" start
         ;;
     
     status)

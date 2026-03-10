@@ -6,7 +6,7 @@ pipeline:
   default_platform: "wechat"
 
   # LLM 调用模式: direct | gateway
-  llm_mode: "direct"
+  llm_mode: "gateway"
 
   # 默认模型
   default_llm: "dashscope/qwen3.5-plus"
@@ -16,11 +16,11 @@ pipeline:
 
   # 各角色模型覆盖
   llm_overrides:
-    scout: "dashscope/qwen3.5-plus"
-    researcher: "dashscope/qwen3.5-plus"
+    scout: "anthropic/claude-sonnet-4-6"
+    researcher: "anthropic/claude-sonnet-4-6"
     writer: "openai-codex/gpt-5.4"
     de_ai_editor: "anthropic/claude-sonnet-4-6"
-    director: "dashscope/qwen3.5-plus"
+    director: "anthropic/claude-opus-4-6"
     director_refine: "dashscope/qwen3.5-plus"
 
 # Scout 配置

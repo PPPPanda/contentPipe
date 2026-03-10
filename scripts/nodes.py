@@ -640,7 +640,7 @@ def director_refine_node(state: ContentState) -> ContentState:
         context_parts.append(f"\n--- 用户修改意见 ---\n{json.dumps(feedback, ensure_ascii=False)}")
 
     context = "\n".join(context_parts)
-    result = _call_llm_with_session(state, "director_refine", prompt, context, model=_get_model("director"))
+    result = _call_llm_with_session(state, "director_refine", prompt, context, model=_get_model("director_refine"))
 
     _save_artifact(state["run_id"], "director_refine_raw.txt", result)
 

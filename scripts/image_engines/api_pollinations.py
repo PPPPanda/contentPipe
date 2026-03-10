@@ -154,6 +154,7 @@ def _shorten_prompt(prompt: str, max_len: int = 180) -> str:
                    "Keep the most important visual elements: subject, style, mood, colors. "
                    "Output ONLY the condensed prompt.",
             context=prompt,
+            model="anthropic/claude-sonnet-4-6",
             temperature=0.2,
             max_tokens=150,
         )
@@ -183,6 +184,7 @@ def _translate_prompt(chinese_prompt: str) -> str:
                    "Output ONLY the English prompt, nothing else. Keep it concise (under 60 words). "
                    "Preserve the artistic style, mood, and composition details.",
             context=chinese_prompt,
+            model="anthropic/claude-sonnet-4-6",
             temperature=0.3,
             max_tokens=200,
         )

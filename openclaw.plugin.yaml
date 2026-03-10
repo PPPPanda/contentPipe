@@ -120,8 +120,10 @@ config:
   llm_mode: gateway
   gateway_url: "http://localhost:18789"
   models:
-    scout: "dashscope/qwen3.5-plus"
-    researcher: "dashscope/qwen3.5-plus"
+    scout: "anthropic/claude-sonnet-4-6"
+    researcher: "anthropic/claude-sonnet-4-6"
     writer: "openai-codex/gpt-5.4"
     de_ai_editor: "anthropic/claude-sonnet-4-6"
-    director: "dashscope/qwen3.5-plus"
+    director: "anthropic/claude-opus-4-6"
+    director_refine: "dashscope/qwen3.5-plus"
+    image_prompt_helper: "anthropic/claude-sonnet-4-6"
