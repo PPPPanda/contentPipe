@@ -310,7 +310,7 @@ async def api_chat(request: Request, run_id: str):
     user_msg = body.get("message", "").strip()
     node_id = body.get("node", "")
     attachments = body.get("attachments", []) or []
-    if not user_msg:
+    if not user_msg and not attachments:
         raise HTTPException(status_code=400, detail="Empty message")
 
     raw = _load_raw_state(run_id)
@@ -323,7 +323,8 @@ async def api_chat(request: Request, run_id: str):
     from tools import call_llm, load_pipeline_config
 
     history = get_chat_history(run_id, node_id)
-    save_chat_message(run_id, node_id, "user", user_msg, attachments=attachments)
+    display_msg = user_msg or "(附图片)"
+    save_chat_message(run_id, node_id, "user", display_msg, attachments=attachments)
 
     # ── skill-driven 提示：检测 URL / 搜索意图，但不在 Python 里预抓取内容 ──
     import re as _re
@@ -373,7 +374,8 @@ async def api_chat(request: Request, run_id: str):
             tag="skill_hint",
             internal=True,
         )
-        user_msg = user_msg + "\n\n" + "\n\n".join(skill_hints)
+        base_msg = user_msg or "(附图片)"
+        user_msg = base_msg + "\n\n" + "\n\n".join(skill_hints)
 
     # 构建节点专属 system prompt
     system_prompt = _build_node_chat_prompt(node_id, raw)
