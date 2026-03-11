@@ -126,14 +126,7 @@ def _call_llm_with_session(
 
 
 def _blank_agent_output_candidates(run_id: str, node_id: str, filename: str) -> list[Path]:
-    official_output = OUTPUT_DIR / "runs" / run_id / filename
-    legacy_workspace_root = Path(__file__).resolve().parents[3] / "runs" / run_id / node_id / filename
-    legacy_blank_workspace = Path(
-        load_pipeline_config().get("pipeline", {}).get(
-            "gateway_agent_workspace", "/home/ssp/work/openclawWS/contentpipe_blank_workspace"
-        )
-    ) / "runs" / run_id / node_id / filename
-    return [official_output, legacy_workspace_root, legacy_blank_workspace]
+    return [OUTPUT_DIR / "runs" / run_id / filename]
 
 
 def _call_llm_to_file_with_session(

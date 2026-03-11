@@ -240,6 +240,36 @@ ANTHROPIC_API_KEY=...
 ./start.sh logs
 ./start.sh stop
 ./start.sh restart
+./start.sh install-agent
+```
+
+### 6.1.1 一键注册 `contentpipe-blank`（Gateway 模式必做）
+
+如果你要使用 `llm_mode=gateway` 的低污染 blank-agent 执行平面，先运行：
+
+```bash
+./start.sh install-agent
+openclaw gateway restart
+```
+
+这会：
+- 创建/修正 `contentpipe-blank`
+- 设置独立 `workspace` / `agentDir`
+- 将工具权限设为全开（`allow=[]`, `deny=[]`）
+- 若存在 main agent 的 `auth-profiles.json`，自动复制到 blank agent
+
+默认路径：
+- workspace: `~/.openclaw/workspace-contentpipe-blank`
+- agentDir: `~/.openclaw/agents/contentpipe-blank/agent`
+
+可通过环境变量覆盖：
+
+```bash
+CONTENTPIPE_AGENT_ID=contentpipe-blank \
+CONTENTPIPE_AGENT_WORKSPACE=~/.openclaw/workspace-contentpipe-blank \
+CONTENTPIPE_AGENT_DIR=~/.openclaw/agents/contentpipe-blank/agent \
+CONTENTPIPE_AGENT_MODEL=anthropic-sonnet/claude-sonnet-4-6 \
+./start.sh install-agent
 ```
 
 ### 6.2 Docker 一键部署（推荐给外部用户）

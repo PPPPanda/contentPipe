@@ -16,7 +16,6 @@ pipeline:
 
   # blank-agent 执行平面（用于低污染文件产物生成）
   gateway_agent_id: "contentpipe-blank"
-  gateway_agent_workspace: "/home/ssp/work/openclawWS/contentpipe_blank_workspace"
 
   # 各角色模型覆盖
   llm_overrides:
