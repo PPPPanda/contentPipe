@@ -129,6 +129,11 @@ plugins/content-pipeline/skills/
 - `docs/SKILL-POLICY.md`
 - `docs/BUILTIN-SKILLS.md`
 
+当前已内置的最小 skills：
+- `contentpipe-wechat-reader`
+- `contentpipe-url-reader`
+- `contentpipe-web-research`
+
 ### 3.2 目录结构
 
 ```text
@@ -299,6 +304,8 @@ openclaw gateway restart
 - 创建/修正 `contentpipe-blank`
 - 设置独立 `workspace` / `agentDir`
 - 将工具权限设为全开（`allow=[]`, `deny=[]`）
+- 把插件内置 skills 目录注册到 `skills.load.extraDirs`
+- 给 `contentpipe-blank` 写入 ContentPipe 专用 skill allowlist
 - 若存在 main agent 的 `auth-profiles.json`，自动复制到 blank agent
 
 默认路径：

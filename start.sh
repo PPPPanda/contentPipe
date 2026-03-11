@@ -14,6 +14,8 @@ CONTENTPIPE_AGENT_ID="${CONTENTPIPE_AGENT_ID:-contentpipe-blank}"
 CONTENTPIPE_AGENT_WORKSPACE="${CONTENTPIPE_AGENT_WORKSPACE:-$HOME/.openclaw/workspace-${CONTENTPIPE_AGENT_ID}}"
 CONTENTPIPE_AGENT_DIR="${CONTENTPIPE_AGENT_DIR:-$HOME/.openclaw/agents/${CONTENTPIPE_AGENT_ID}/agent}"
 CONTENTPIPE_AGENT_MODEL="${CONTENTPIPE_AGENT_MODEL:-}"
+CONTENTPIPE_SKILLS_DIR="${CONTENTPIPE_SKILLS_DIR:-$PLUGIN_DIR/skills}"
+CONTENTPIPE_AGENT_SKILLS_JSON="${CONTENTPIPE_AGENT_SKILLS_JSON:-[\"contentpipe-wechat-reader\",\"contentpipe-url-reader\",\"contentpipe-web-research\"]}"
 
 service_start() {
     cd "$PLUGIN_DIR/scripts" || exit 1
@@ -106,8 +108,28 @@ PY
     fi
     openclaw config set "agents.list[$AGENT_INDEX].tools.allow" '[]' --strict-json
     openclaw config set "agents.list[$AGENT_INDEX].tools.deny" '[]' --strict-json
+    openclaw config set "agents.list[$AGENT_INDEX].skills" "$CONTENTPIPE_AGENT_SKILLS_JSON" --strict-json
+
+    MERGED_SKILL_DIRS=$(CONTENTPIPE_SKILLS_DIR="$CONTENTPIPE_SKILLS_DIR" python3 - <<'PY'
+import json, os, subprocess
+skills_dir = os.environ['CONTENTPIPE_SKILLS_DIR']
+try:
+    existing = json.loads(subprocess.check_output(['openclaw', 'config', 'get', 'skills.load.extraDirs', '--json']).decode())
+    if not isinstance(existing, list):
+        existing = []
+except Exception:
+    existing = []
+merged = []
+for item in [*existing, skills_dir]:
+    if item and item not in merged:
+        merged.append(item)
+print(json.dumps(merged, ensure_ascii=False))
+PY
+)
+    openclaw config set "skills.load.extraDirs" "$MERGED_SKILL_DIRS" --strict-json
 
     mkdir -p "$CONTENTPIPE_AGENT_DIR"
+    mkdir -p "$CONTENTPIPE_AGENT_WORKSPACE"
     if [ -f "$HOME/.openclaw/agents/main/agent/auth-profiles.json" ] && [ ! -f "$CONTENTPIPE_AGENT_DIR/auth-profiles.json" ]; then
         cp "$HOME/.openclaw/agents/main/agent/auth-profiles.json" "$CONTENTPIPE_AGENT_DIR/auth-profiles.json"
         chmod 600 "$CONTENTPIPE_AGENT_DIR/auth-profiles.json" || true
@@ -129,6 +151,8 @@ PY
 - agent id: $CONTENTPIPE_AGENT_ID
 - workspace: $CONTENTPIPE_AGENT_WORKSPACE
 - agentDir: $CONTENTPIPE_AGENT_DIR
+- skill source: $CONTENTPIPE_SKILLS_DIR
+- agent skills: $CONTENTPIPE_AGENT_SKILLS_JSON
 EOF
 }
 
