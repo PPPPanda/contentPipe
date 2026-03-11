@@ -272,6 +272,26 @@ CONTENTPIPE_AGENT_MODEL=anthropic-sonnet/claude-sonnet-4-6 \
 ./start.sh install-agent
 ```
 
+### 6.1.2 首次部署 Checklist（推荐照着跑）
+
+```bash
+cp .env.example .env
+# 编辑 .env，至少填 CONTENTPIPE_AUTH_TOKEN / OPENCLAW_GATEWAY_URL
+
+./start.sh install-agent
+openclaw gateway restart
+./start.sh start
+./start.sh status
+curl http://127.0.0.1:8765/api/health
+```
+
+检查项：
+- `CONTENTPIPE_AUTH_TOKEN` 已设置
+- OpenClaw Gateway 可访问，且鉴权 token 正常
+- `contentpipe-blank` 已创建
+- Gateway 已重启，agent 配置已生效
+- `http://127.0.0.1:8765/api/health` 返回 healthy
+
 ### 6.2 Docker 一键部署（推荐给外部用户）
 
 ```bash
