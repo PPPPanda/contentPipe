@@ -58,6 +58,26 @@
 - 生效方式：`openclaw gateway restart`
 - 正式产物路径：`plugins/content-pipeline/output/runs/<run_id>/`
 
+### 2.2 内置 skill 单源架构
+
+ContentPipe 的能力增强不再继续堆进 Python pipeline，而是逐步内置为插件自带 skills：
+
+```text
+plugins/content-pipeline/skills/
+```
+
+设计约束：
+- skills 作为插件内容的一部分，**与插件版本一起发布**
+- 不采用“仓库内置 + 运行时外装”的双轨制
+- blank-agent 只暴露 allowlist 中的 ContentPipe skills
+- Python pipeline 保留：state / validator / 文件 contract / 确定性发布步骤
+
+这套约束的目标是同时满足：
+- 能力可查（agent 知道自己有哪些增强能力）
+- 低污染（不把 blank-agent 重新做成大工作区 agent）
+- 可部署（外部用户无需手工拼 skills）
+- 可审计（所有 skills 进入 git 与 release）
+
 ## 3. Session 架构
 
 ### 3.1 节点 = Session

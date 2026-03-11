@@ -7,6 +7,10 @@ version: 0.7.0
 description: "AI 图文内容生产线：选题→调研→写作→配图→排版→发布，每步可交互审核。"
 emoji: 📝
 
+# 插件内置 skills（与插件版本一起发布）
+skills:
+  - skills
+
 # 插件类型：managed-service（后台常驻 Python 进程 + Web UI）
 type: managed-service
 

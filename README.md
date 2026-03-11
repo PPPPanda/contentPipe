@@ -111,6 +111,24 @@ ContentPipe Service (FastAPI)
 - 安装命令：`./start.sh install-agent`
 - 生效命令：`openclaw gateway restart`
 
+### 3.1.2 内置 skill 单源策略
+
+ContentPipe 未来的能力增强（公众号阅读、URL 读取、搜索、发布知识等）统一收口到：
+
+```text
+plugins/content-pipeline/skills/
+```
+
+原则：
+- skill **随插件版本一起发布**
+- 不采用“插件内置 + 运行时外装”双轨制
+- `contentpipe-blank` 只暴露 ContentPipe 所需的 skill allowlist
+- Python pipeline 只保留编排、state、validator、持久化和确定性发布步骤
+
+详细规范见：
+- `docs/SKILL-POLICY.md`
+- `docs/BUILTIN-SKILLS.md`
+
 ### 3.2 目录结构
 
 ```text
