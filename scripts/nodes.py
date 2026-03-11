@@ -1342,7 +1342,7 @@ def _insert_images_into_html(
 
 def _publish_wechat(state: dict, config: dict) -> dict:
     """微信公众号发布：上传图片 → 创建草稿"""
-    from tools import wechat_get_token, wechat_upload_image, wechat_create_draft
+    from tools import wechat_get_token, wechat_upload_image, wechat_upload_permanent_image, wechat_create_draft
 
     wechat_config = config.get("wechat", {})
     app_id = wechat_config.get("app_id", "")
@@ -1372,38 +1372,77 @@ def _publish_wechat(state: dict, config: dict) -> dict:
 
         cdn_replacements = {}
         for pid, option in selected.items():
+            matched = None
             for img in generated:
                 if img.get("placement_id") == pid and img.get("option") == option:
-                    file_path = img.get("file_path", "")
-                    if file_path and os.path.exists(file_path):
-                        image_bytes = open(file_path, "rb").read()
-                        cdn_url = wechat_upload_image(token, image_bytes, f"{pid}_{option}.png")
-                        # 替换本地路径为 CDN URL
-                        local_url = f"/api/runs/{run_id}/images/{pid}_{option}.png"
-                        cdn_replacements[local_url] = cdn_url
-                        logger.info("Uploaded %s_%s -> %s...", pid, option, cdn_url[:60])
+                    matched = img
                     break
+            if matched is None:
+                for img in generated:
+                    if img.get("placement_id") == pid and img.get("file_path"):
+                        matched = img
+                        break
+            if matched:
+                file_path = matched.get("file_path", "")
+                if file_path and os.path.exists(file_path):
+                    image_bytes = open(file_path, "rb").read()
+                    cdn_url = wechat_upload_image(token, image_bytes, f"{pid}_{option}.png")
+                    local_url = f"/api/runs/{run_id}/images/{os.path.basename(file_path)}"
+                    cdn_replacements[local_url] = cdn_url
+                    logger.info("Uploaded %s_%s -> %s...", pid, option, cdn_url[:60])
 
         # 替换 HTML 中的图片路径
         for local_url, cdn_url in cdn_replacements.items():
             html = html.replace(local_url, cdn_url)
 
-        # 3. 创建草稿
+        # 3. 选择并上传封面素材（P0: 先复用首张成功图；后续再接专门 cover 生成）
+        cover_file_path = ""
+        for pid, option in selected.items():
+            matched = None
+            for img in generated:
+                if img.get("placement_id") == pid and img.get("option") == option and img.get("success") and img.get("file_path"):
+                    matched = img
+                    break
+            if matched is None:
+                for img in generated:
+                    if img.get("placement_id") == pid and img.get("success") and img.get("file_path"):
+                        matched = img
+                        break
+            if matched:
+                cover_file_path = matched["file_path"]
+                break
+        if not cover_file_path:
+            for img in generated:
+                if img.get("success") and img.get("file_path"):
+                    cover_file_path = img["file_path"]
+                    break
+
+        if not cover_file_path or not os.path.exists(cover_file_path):
+            raise RuntimeError("No successful generated image available for WeChat draft cover")
+
+        with open(cover_file_path, "rb") as f:
+            thumb_media_id = wechat_upload_permanent_image(token, f.read(), os.path.basename(cover_file_path))
+        logger.info("WeChat cover uploaded -> thumb_media_id=%s", thumb_media_id)
+
+        # 4. 创建草稿
         article = state.get("article", {})
+        topic = state.get("topic", {})
         media_id = wechat_create_draft(token, {
             "title": article.get("title", ""),
             "content_html": html,
-            "subtitle": article.get("subtitle", ""),
+            "subtitle": article.get("subtitle", "") or topic.get("summary", "")[:120],
             "author": wechat_config.get("author", "ContentPipe"),
-            "thumb_media_id": "",  # TODO: 封面图
+            "thumb_media_id": thumb_media_id,
         })
 
         return {
             "platform": "wechat",
-            "status": "draft",
+            "status": "draft_saved",
             "media_id": media_id,
             "url": "",
             "images_uploaded": len(cdn_replacements),
+            "thumb_media_id": thumb_media_id,
+            "cover_source": os.path.basename(cover_file_path),
         }
 
     except Exception as e:

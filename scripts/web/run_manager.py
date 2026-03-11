@@ -299,9 +299,11 @@ def get_node_output(run_id: str, node_id: str) -> dict:
 
             placement_cards.append({"label": f"🖼️ 配图 {i} ({pid})", "value": card_text})
 
+        cover = vp.get("cover", {})
         items = [
             {"label": "🎨 风格", "value": vp.get("style", "—")},
             {"label": "🌈 色调", "value": (vp.get("global_tone", "—"))[:120]},
+            {"label": "🧷 封面设计", "value": (cover.get("description", "—"))[:140]},
             {"label": "🖼️ 配图数", "value": f"{len(placements)} 张"},
         ]
         items.extend(placement_cards)

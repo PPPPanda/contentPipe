@@ -743,6 +743,18 @@ def wechat_upload_image(access_token: str, image_bytes: bytes, filename: str = "
         raise RuntimeError(f"WeChat upload error: {data}")
 
 
+def wechat_upload_permanent_image(access_token: str, image_bytes: bytes, filename: str = "cover.png") -> str:
+    """上传永久图片素材，返回 media_id（用于 thumb_media_id）"""
+    url = f"https://api.weixin.qq.com/cgi-bin/material/add_material?access_token={access_token}&type=image"
+    files = {"media": (filename, image_bytes, "image/png")}
+    with httpx.Client(timeout=30) as client:
+        resp = client.post(url, files=files)
+        data = resp.json()
+        if "media_id" in data:
+            return data["media_id"]
+        raise RuntimeError(f"WeChat permanent image upload error: {data}")
+
+
 def wechat_create_draft(access_token: str, article: dict) -> str:
     """创建微信公众号草稿，返回 media_id"""
     url = f"https://api.weixin.qq.com/cgi-bin/draft/add?access_token={access_token}"

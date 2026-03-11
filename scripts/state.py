@@ -51,9 +51,18 @@ class ImagePlacement(TypedDict, total=False):
     size_hint: str               # full_width / half / thumbnail
 
 
+class CoverDesign(TypedDict, total=False):
+    title: str
+    description: str
+    purpose: str
+    aspect_ratio: str
+    style_notes: str
+
+
 class VisualPlan(TypedDict, total=False):
     style: str
     global_tone: str
+    cover: CoverDesign
     placements: list[ImagePlacement]
 
 

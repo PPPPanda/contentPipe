@@ -165,12 +165,20 @@ def validate_visual_plan_json(text: str) -> ValidationResult:
 
     style = parsed.get("style")
     global_tone = parsed.get("global_tone")
+    cover = parsed.get("cover")
     placements = parsed.get("placements")
 
     if not isinstance(style, str) or not style.strip():
         details.append("style must be a non-empty string")
     if not isinstance(global_tone, str) or not global_tone.strip():
         details.append("global_tone must be a non-empty string")
+    if not isinstance(cover, dict):
+        details.append("cover must be an object")
+    else:
+        for field in ("title", "description", "purpose", "aspect_ratio", "style_notes"):
+            value = cover.get(field)
+            if not isinstance(value, str) or not value.strip():
+                details.append(f"cover.{field} must be a non-empty string")
     if not isinstance(placements, list) or not placements:
         details.append("placements must be a non-empty list")
     else:

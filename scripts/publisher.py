@@ -22,7 +22,7 @@ import yaml
 from logutil import get_logger
 
 
-DEFAULT_OUTPUT_BASE = Path(__file__).parent.parent.parent.parent / "work" / "content-pipeline" / "output" / "runs"
+DEFAULT_OUTPUT_BASE = Path(__file__).parent.parent / "output" / "runs"
 
 logger = get_logger(__name__)
 
@@ -48,6 +48,18 @@ def wechat_upload_image(token: str, image_bytes: bytes, filename: str = "image.p
         if "url" in data:
             return data["url"]
         raise RuntimeError(f"WeChat upload error: {data}")
+
+
+def wechat_upload_permanent_image(token: str, image_bytes: bytes, filename: str = "cover.png") -> str:
+    with httpx.Client(timeout=30) as client:
+        resp = client.post(
+            f"https://api.weixin.qq.com/cgi-bin/material/add_material?access_token={token}&type=image",
+            files={"media": (filename, image_bytes, "image/png")},
+        )
+        data = resp.json()
+        if "media_id" in data:
+            return data["media_id"]
+        raise RuntimeError(f"WeChat permanent image upload error: {data}")
 
 
 def wechat_create_draft(token: str, article: dict) -> str:
@@ -95,23 +107,62 @@ def publish_wechat(output_dir: Path) -> dict:
         selected = state.get("selected_images", {})
         generated = state.get("generated_images", [])
         for pid, option in selected.items():
+            matched = None
+            for img in generated:
+                if img.get("placement_id") == pid and img.get("option") == option:
+                    matched = img
+                    break
+            if matched is None:
+                for img in generated:
+                    if img.get("placement_id") == pid and img.get("file_path"):
+                        matched = img
+                        break
+            if matched:
+                fpath = matched.get("file_path", "")
+                if fpath and os.path.exists(fpath):
+                    cdn_url = wechat_upload_image(token, open(fpath, "rb").read(), f"{pid}.png")
+                    local_url = f"/api/runs/{run_id}/images/{os.path.basename(fpath)}"
+                    html = html.replace(local_url, cdn_url)
+                    logger.info("%s -> %s...", pid, cdn_url[:50])
+
+        cover_file_path = ""
+        for pid, option in selected.items():
+            matched = None
             for img in generated:
                 if img.get("placement_id") == pid and img.get("option") == option:
                     fpath = img.get("file_path", "")
                     if fpath and os.path.exists(fpath):
-                        cdn_url = wechat_upload_image(token, open(fpath, "rb").read(), f"{pid}.png")
-                        local_url = f"/api/runs/{run_id}/images/{os.path.basename(fpath)}"
-                        html = html.replace(local_url, cdn_url)
-                        logger.info("%s -> %s...", pid, cdn_url[:50])
+                        matched = img
+                        break
+            if matched is None:
+                for img in generated:
+                    fpath = img.get("file_path", "")
+                    if img.get("placement_id") == pid and img.get("success") and fpath and os.path.exists(fpath):
+                        matched = img
+                        break
+            if matched:
+                cover_file_path = matched["file_path"]
+                break
+        if not cover_file_path:
+            for img in generated:
+                fpath = img.get("file_path", "")
+                if img.get("success") and fpath and os.path.exists(fpath):
+                    cover_file_path = fpath
                     break
+        if not cover_file_path:
+            raise RuntimeError("No successful generated image available for WeChat draft cover")
+
+        thumb_media_id = wechat_upload_permanent_image(token, open(cover_file_path, "rb").read(), os.path.basename(cover_file_path))
 
         media_id = wechat_create_draft(token, {
             "title": article.get("title", ""),
             "content_html": html,
-            "subtitle": article.get("subtitle", ""),
+            "subtitle": article.get("subtitle", "") or (state.get("topic", {}).get("summary", "")[:120]),
+            "author": os.environ.get("WECHAT_AUTHOR", "ContentPipe"),
+            "thumb_media_id": thumb_media_id,
         })
         logger.info("Draft created: %s", media_id)
-        return {"platform": "wechat", "status": "draft", "media_id": media_id}
+        return {"platform": "wechat", "status": "draft_saved", "media_id": media_id, "thumb_media_id": thumb_media_id, "cover_source": os.path.basename(cover_file_path)}
 
     except Exception as e:
         logger.error("%s", e)
