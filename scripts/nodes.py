@@ -126,13 +126,14 @@ def _call_llm_with_session(
 
 
 def _blank_agent_output_candidates(run_id: str, node_id: str, filename: str) -> list[Path]:
-    cfg = load_pipeline_config().get("pipeline", {})
-    primary_root = Path(__file__).resolve().parents[3]  # clawdbot_workspace
-    fallback_root = Path(cfg.get("gateway_agent_workspace", "/home/ssp/work/openclawWS/contentpipe_blank_workspace"))
-    return [
-        primary_root / "runs" / run_id / node_id / filename,
-        fallback_root / "runs" / run_id / node_id / filename,
-    ]
+    official_output = OUTPUT_DIR / "runs" / run_id / filename
+    legacy_workspace_root = Path(__file__).resolve().parents[3] / "runs" / run_id / node_id / filename
+    legacy_blank_workspace = Path(
+        load_pipeline_config().get("pipeline", {}).get(
+            "gateway_agent_workspace", "/home/ssp/work/openclawWS/contentpipe_blank_workspace"
+        )
+    ) / "runs" / run_id / node_id / filename
+    return [official_output, legacy_workspace_root, legacy_blank_workspace]
 
 
 def _call_llm_to_file_with_session(
@@ -150,16 +151,18 @@ def _call_llm_to_file_with_session(
     cfg = load_pipeline_config().get("pipeline", {})
     gateway_agent_id = cfg.get("gateway_agent_id")
     candidates = _blank_agent_output_candidates(state["run_id"], node_id, output_filename)
-    primary_target = candidates[0]
+    official_target = candidates[0]
     for path in candidates:
         path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists():
-            path.unlink()
+    if official_target.exists():
+        official_target.unlink()
 
     write_instruction = (
         f"{context}\n\n"
         f"=== OUTPUT CONTRACT ===\n"
-        f"Use the write tool to create or overwrite the file `runs/{state['run_id']}/{node_id}/{output_filename}` in your workspace.\n"
+        f"Write the final {output_kind} to this exact absolute path using the write tool:\n"
+        f"{official_target.as_posix()}\n"
+        f"Do NOT write this output anywhere else. Do NOT use relative paths like runs/...\n"
         f"The file must contain ONLY the final {output_kind}.\n"
         f"Do not include explanations, self-checks, prefaces, markdown fences, or commentary outside the file.\n"
         f"After writing the file, you may reply briefly."
