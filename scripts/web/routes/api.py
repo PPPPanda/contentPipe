@@ -309,6 +309,7 @@ async def api_chat(request: Request, run_id: str):
     body = await request.json()
     user_msg = body.get("message", "").strip()
     node_id = body.get("node", "")
+    attachments = body.get("attachments", []) or []
     if not user_msg:
         raise HTTPException(status_code=400, detail="Empty message")
 
@@ -322,7 +323,7 @@ async def api_chat(request: Request, run_id: str):
     from tools import call_llm, load_pipeline_config
 
     history = get_chat_history(run_id, node_id)
-    save_chat_message(run_id, node_id, "user", user_msg)
+    save_chat_message(run_id, node_id, "user", user_msg, attachments=attachments)
 
     # ── skill-driven 提示：检测 URL / 搜索意图，但不在 Python 里预抓取内容 ──
     import re as _re
@@ -337,6 +338,22 @@ async def api_chat(request: Request, run_id: str):
         skill_hints.append(
             "[技能提示] 用户消息中包含参考链接。请优先使用可见的 contentpipe-wechat-reader / contentpipe-url-reader / contentpipe-style-reference 自行读取和提炼，不要假装系统已经替你抓好了正文。\n"
             + json.dumps(urls[:5], ensure_ascii=False, indent=2)
+        )
+
+    if attachments:
+        attachment_hint = [
+            {
+                'type': a.get('type', 'image'),
+                'path': a.get('path', ''),
+                'filename': a.get('filename', ''),
+                'mime': a.get('mime', ''),
+                'purpose': a.get('purpose', 'chat_reference'),
+            }
+            for a in attachments[:5]
+        ]
+        skill_hints.append(
+            "[技能提示] 用户附了图片附件。请把这些附件当作视觉/风格/内容参考，按需使用可见的 contentpipe-style-reference 或相关 skills 进行分析，不要忽略附件。\n"
+            + json.dumps(attachment_hint, ensure_ascii=False, indent=2)
         )
 
     search_triggers = _re.search(r'(?:搜一下|查一查|帮我搜|search for|look up|搜索)\s*[：:]?\s*(.+)', user_msg, _re.I)
@@ -680,6 +697,7 @@ async def api_upload_image(run_id: str, request: Request):
     image = form.get("image")
     message = form.get("message", "")
     placement_id = form.get("placement_id", "")
+    purpose = form.get("purpose", "placement" if placement_id else "chat")
 
     if not image:
         raise HTTPException(status_code=400, detail="No image file")
@@ -718,21 +736,28 @@ async def api_upload_image(run_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Image too large (max 20MB)")
     filepath.write_bytes(content)
 
-    # 更新 state 中的 generated_images
-    generated = state.get("generated_images", [])
-    # 移除该 placement_id 的旧记录
-    generated = [g for g in generated if g.get("placement_id") != placement_id]
-    generated.append({
-        "placement_id": placement_id,
-        "success": True,
-        "file_path": str(filepath),
-        "engine": "user_upload",
-        "option": None,
-    })
-    state["generated_images"] = generated
-    _save_state(state)
+    if purpose == "placement":
+        # 更新 state 中的 generated_images
+        generated = state.get("generated_images", [])
+        generated = [g for g in generated if g.get("placement_id") != placement_id]
+        generated.append({
+            "placement_id": placement_id,
+            "success": True,
+            "file_path": str(filepath),
+            "engine": "user_upload",
+            "option": None,
+        })
+        state["generated_images"] = generated
+        _save_state(state)
 
-    return {"ok": True, "filename": filename, "path": str(filepath), "placement_id": placement_id}
+    return {
+        "ok": True,
+        "filename": filename,
+        "path": str(filepath),
+        "placement_id": placement_id,
+        "purpose": purpose,
+        "mime": content_type or f"image/{suffix.lstrip('.')}"
+    }
 
 
 @router.delete("/runs/{run_id}/placements/{pid}")

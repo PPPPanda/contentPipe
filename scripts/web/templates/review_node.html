@@ -299,22 +299,18 @@
                 </div>
             </div>
 
-            {# 图片上传预览（Director 阶段） #}
-            {% if stage == 'director' %}
+            {# 图片上传预览（所有节点通用） #}
             <div id="upload-preview" style="display:none" class="mb-2 flex items-center gap-2 bg-slate-800/50 rounded p-2">
                 <img id="upload-thumb" class="w-12 h-12 object-cover rounded">
                 <span id="upload-name" class="text-xs text-slate-400 flex-1 truncate"></span>
                 <button onclick="clearUpload()" class="text-xs text-red-400 hover:text-red-300">✕</button>
             </div>
-            {% endif %}
 
             <div class="flex gap-2">
-                {% if stage == 'director' %}
                 <label class="px-2 py-2 bg-slate-700 text-slate-300 rounded-lg hover:bg-slate-600 transition cursor-pointer shrink-0 text-sm" title="上传图片">
                     📎
                     <input type="file" id="image-upload" accept="image/*" style="display:none" onchange="handleImageUpload(this)">
                 </label>
-                {% endif %}
                 <input type="text" id="chat-input" placeholder="{% if stage == 'director' %}输入指令（如：用这张图替换配图2）...{% else %}输入你的想法...{% endif %}"
                        class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none"
                        onkeydown="if(event.key==='Enter' && !event.shiftKey){event.preventDefault();sendChat()}">
@@ -366,14 +362,31 @@ const chatInput = document.getElementById('chat-input');
     try {
         const resp = await fetch(`/api/runs/${runId}/chat/history?node=${nodeId}`);
         const msgs = await resp.json();
-        for (const msg of msgs) appendMsg(msg.role, msg.content);
+        for (const msg of msgs) appendMsg(msg.role, msg.content, msg.attachments || []);
     } catch(e) {}
 })();
 
-function appendMsg(role, content) {
+function appendMsg(role, content, attachments = []) {
     const div = document.createElement('div');
     div.className = `chat-msg ${role === 'user' ? 'chat-user' : 'chat-ai'} rounded-lg px-3 py-2 text-sm text-slate-200`;
-    div.innerHTML = content.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+    let html = (content || '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
+    if (attachments && attachments.length) {
+        const cards = attachments.map(att => {
+            const filename = att.filename || '附件';
+            const path = att.path || '';
+            const isImage = (att.type || 'image') === 'image';
+            const basename = path ? path.split('/').pop() : '';
+            const imgSrc = basename ? `/api/runs/${runId}/images/${basename}` : '';
+            return `
+                <div class="mt-2 p-2 rounded bg-slate-800/60 border border-slate-700">
+                    <div class="text-xs text-slate-400">📎 ${filename}</div>
+                    ${isImage && imgSrc ? `<img src="${imgSrc}" class="mt-2 max-h-40 rounded border border-slate-700" />` : ''}
+                </div>
+            `;
+        }).join('');
+        html += cards;
+    }
+    div.innerHTML = html;
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
 }
@@ -393,19 +406,26 @@ async function sendChat() {
     if (!msg && !pendingImageFile) return;
     chatInput.value = '';
 
-    // 如果有附带图片，先上传
-    let imageInfo = '';
+    // 如果有附带图片，先上传，形成 attachments[]
+    let attachments = [];
     if (pendingImageFile) {
-        appendMsg('user', `${msg || '(附图片)'}\n📎 ${pendingImageFile.name}`);
+        appendMsg('user', msg || '(附图片)', [{ filename: pendingImageFile.name, type: 'image' }]);
         showTyping();
         const formData = new FormData();
         formData.append('image', pendingImageFile);
         formData.append('message', msg);
+        formData.append('purpose', 'chat');
         try {
             const uploadResp = await fetch(`/api/runs/${runId}/images/upload`, { method: 'POST', body: formData });
             if (uploadResp.ok) {
                 const uploadData = await uploadResp.json();
-                imageInfo = `\n[用户上传了图片: ${uploadData.filename}, 已保存到 ${uploadData.path}]`;
+                attachments = [{
+                    type: 'image',
+                    filename: uploadData.filename,
+                    path: uploadData.path,
+                    mime: uploadData.mime || 'image/*',
+                    purpose: uploadData.purpose || 'chat_reference',
+                }];
             }
         } catch(e) {}
         clearUpload();
@@ -418,11 +438,11 @@ async function sendChat() {
         const resp = await fetch(`/api/runs/${runId}/chat`, {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({message: msg + imageInfo, node: nodeId}),
+            body: JSON.stringify({message: msg, node: nodeId, attachments}),
         });
         const data = await resp.json();
         hideTyping();
-        appendMsg('assistant', data.content || '(无回复)');
+        appendMsg('assistant', data.content || '(无回复)', data.attachments || []);
 
         async function refreshOutputCards() {
             const outputEl = document.getElementById('node-output-cards');
@@ -469,7 +489,7 @@ async function sendChat() {
     }
 }
 
-// ── Director 配图操作 ──
+// ── 聊天附件 / Director 配图操作 ──
 let pendingImageFile = null;
 
 function handleImageUpload(input) {

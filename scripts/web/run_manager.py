@@ -120,7 +120,8 @@ def get_chat_history_visible(run_id: str, node_id: str = "") -> list[dict]:
 
 
 def save_chat_message(run_id: str, node_id: str, role: str, content: str,
-                      tag: str = "", internal: bool = False):
+                      tag: str = "", internal: bool = False,
+                      attachments: list[dict[str, Any]] | None = None):
     """追加一条聊天消息到节点 session
 
     internal=True 的消息不会在前端审核对话框中显示，
@@ -140,6 +141,8 @@ def save_chat_message(run_id: str, node_id: str, role: str, content: str,
         msg["tag"] = tag
     if internal:
         msg["internal"] = True
+    if attachments:
+        msg["attachments"] = attachments
     history.append(msg)
     chat_file.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
 
