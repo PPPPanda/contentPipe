@@ -15,7 +15,7 @@ CONTENTPIPE_AGENT_WORKSPACE="${CONTENTPIPE_AGENT_WORKSPACE:-$HOME/.openclaw/work
 CONTENTPIPE_AGENT_DIR="${CONTENTPIPE_AGENT_DIR:-$HOME/.openclaw/agents/${CONTENTPIPE_AGENT_ID}/agent}"
 CONTENTPIPE_AGENT_MODEL="${CONTENTPIPE_AGENT_MODEL:-}"
 CONTENTPIPE_SKILLS_DIR="${CONTENTPIPE_SKILLS_DIR:-$PLUGIN_DIR/skills}"
-CONTENTPIPE_AGENT_SKILLS_JSON="${CONTENTPIPE_AGENT_SKILLS_JSON:-[\"contentpipe-wechat-reader\",\"contentpipe-url-reader\",\"contentpipe-web-research\",\"contentpipe-social-research\"]}"
+CONTENTPIPE_AGENT_SKILLS_JSON="${CONTENTPIPE_AGENT_SKILLS_JSON:-[\"contentpipe-wechat-reader\",\"contentpipe-url-reader\",\"contentpipe-web-research\",\"contentpipe-social-research\",\"contentpipe-style-reference\"]}"
 
 service_start() {
     cd "$PLUGIN_DIR/scripts" || exit 1

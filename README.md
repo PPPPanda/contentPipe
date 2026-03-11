@@ -134,6 +134,7 @@ plugins/content-pipeline/skills/
 - `contentpipe-url-reader`
 - `contentpipe-web-research`
 - `contentpipe-social-research`
+- `contentpipe-style-reference`
 
 ### 3.2 目录结构
 

@@ -20,6 +20,8 @@
 4. 话题分类
 ```
 
+如果当前 agent 可见 `contentpipe-style-reference`，优先用它提炼风格 DNA，再做改写；不要直接长段复制参考文章。
+
 ## 三层对抗策略
 
 ### 第一层：风格拟态（Style Mimicry）

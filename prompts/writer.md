@@ -22,6 +22,8 @@
 - `user_constraints`：必须/禁止的关键词、硬性约束
 - `reference_articles`：参考文章的模仿维度和禁区
 
+此外，如果当前 agent 可见 `contentpipe-style-reference`，你应优先使用它来读取和提炼风格参考链接，而不是机械模仿原文句子。
+
 ### 证据材料层（用什么写）
 - `writer_packet`：safe_facts（可直接写成事实）、cautious_points（需加限定）、forbidden_claims（绝对不能写）
 - `expandable_materials`：定义、对比、争议点——让文章丰富有层次
