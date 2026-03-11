@@ -80,6 +80,7 @@ def call_llm(
             chat_history=chat_history,
             gateway_session_key=gateway_session_key,
             gateway_agent_id=gateway_agent_id,
+            timeout_seconds=int(pipeline_config.get("gateway_timeout_seconds", 420)),
         )
 
     if "/" in model:
@@ -122,6 +123,7 @@ def _call_via_gateway(
     system_prompt: str | None = None,
     gateway_session_key: str | None = None,
     gateway_agent_id: str | None = None,
+    timeout_seconds: int = 420,
 ) -> str:
     """通过 OpenClaw Gateway 调用 LLM。"""
     extra_headers = {}
@@ -149,7 +151,7 @@ def _call_via_gateway(
     if response_format == "json":
         body["response_format"] = {"type": "json_object"}
 
-    with httpx.Client(timeout=180) as client:
+    with httpx.Client(timeout=timeout_seconds) as client:
         resp = client.post(f"{gateway_url}/v1/chat/completions", headers=headers, json=body)
         resp.raise_for_status()
         data = resp.json()

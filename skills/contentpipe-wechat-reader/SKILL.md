@@ -11,7 +11,8 @@ Use this skill when the input contains a WeChat Official Account article URL.
 
 1. Confirm the URL is a WeChat article link (`mp.weixin.qq.com` or equivalent article page).
 2. Use `web_fetch` first with `extractMode="markdown"`.
-3. If extraction works, return/use a compact structured result:
+3. If extraction fails or content quality is poor, report limited extraction quality instead of fabricating article details.
+4. If extraction works, return/use a compact structured result:
    - title
    - author (if visible)
    - url

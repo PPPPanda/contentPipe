@@ -10,7 +10,8 @@ Use this skill for non-WeChat web pages.
 ## Workflow
 
 1. Use `web_fetch` with `extractMode="markdown"`.
-2. Extract only what is useful for the current ContentPipe task:
+2. If the page is clearly a homepage/feed/login wall or fetch quality is poor, fall back to concise notes from available metadata instead of pretending you saw a full article body.
+3. Extract only what is useful for the current ContentPipe task:
    - page title
    - source URL
    - concise summary

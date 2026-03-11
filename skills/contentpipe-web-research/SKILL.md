@@ -10,13 +10,16 @@ Use this skill for lightweight, source-backed web research.
 ## Workflow
 
 1. Start with `web_search` to get relevant result candidates.
-2. Pick the best 2-4 results and use `web_fetch` to read them.
-3. Distill findings into concise, source-labeled notes.
-4. Separate:
+2. Prefer result snippets first; do **not** blindly `web_fetch` every hit.
+3. Pick only the best 2-4 readable article pages for `web_fetch`.
+4. Avoid homepage / login-wall / feed-root pages when possible (for example generic Zhihu home/feed pages that are likely to fail or provide no article body).
+5. If `web_fetch` fails or returns low-value content, fall back to the search snippet instead of looping on the same bad domain.
+6. Distill findings into concise, source-labeled notes.
+7. Separate:
    - observed facts
    - interpretations
    - open questions
-5. Prefer multiple independent sources over one loud source.
+8. Prefer multiple independent sources over one loud source.
 
 ## Suggested output form
 
