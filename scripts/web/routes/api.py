@@ -944,13 +944,11 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
         # 文章改写用 Writer 同一个 model（保持风格一致）
         from nodes import _get_model
         writer_model = _get_model("writer") or "dashscope/qwen3.5-plus"
-        sync_context = f"""用户在审核对话中要求修改文章。请按要求修改。
+        sync_context = f"""用户在审核对话中要求修改文章。请根据用户要求自行判断修改策略：
+- 如果只是局部要求，就做局部修改
+- 如果用户要求按某种风格重写、整体重构、明显改写，就可以整体重写
 
-## 规则
-1. 只修改用户明确要求改的部分
-2. 保持文章整体结构和其他内容不变
-3. 输出完整的修改后文章（Markdown 格式）
-4. 不要输出任何解释文字，只输出文章
+只输出修改后的完整 Markdown 文章，不要输出任何解释文字。
 """
         if recent_urls:
             sync_context += (
