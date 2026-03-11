@@ -854,8 +854,43 @@ def image_gen_node(state: ContentState) -> ContentState:
     # 宽高映射
     aspect_map = {
         "16:9": (1024, 576), "4:3": (1024, 768), "3:4": (768, 1024),
-        "1:1": (1024, 1024), "9:16": (576, 1024),
+        "1:1": (1024, 1024), "9:16": (576, 1024), "2.35:1": (1410, 600),
     }
+
+    # 先生成封面（P0.5: 专门 cover，不再复用正文首图）
+    cover = visual_plan.get("cover", {}) if isinstance(visual_plan, dict) else {}
+    generated_cover = {}
+    if isinstance(cover, dict) and cover.get("description"):
+        cover_path = img_dir / "cover.jpg"
+        cover_aspect = cover.get("aspect_ratio", "2.35:1")
+        cover_width, cover_height = aspect_map.get(cover_aspect, (1410, 600))
+        cover_prompt = ". ".join(
+            part for part in [
+                cover.get("description", ""),
+                cover.get("purpose", ""),
+                cover.get("style_notes", ""),
+            ] if part
+        )
+        logger.info("cover: generating (%s chars)...", len(cover_prompt))
+        cover_result = engine.generate(
+            prompt=cover_prompt,
+            width=cover_width,
+            height=cover_height,
+            seed=20260311,
+            output_path=cover_path,
+        )
+        generated_cover = {
+            "file_path": str(cover_result.file_path) if cover_result.success else "",
+            "engine": cover_result.engine,
+            "prompt_used": cover_result.prompt_used[:300],
+            "generation_time_ms": cover_result.generation_time_ms,
+            "success": cover_result.success,
+            "error": cover_result.error,
+        }
+        if cover_result.success:
+            logger.info("cover done (%sms)", cover_result.generation_time_ms)
+        else:
+            logger.error("cover failed: %s", cover_result.error)
 
     for i, placement in enumerate(placements):
         pid = placement.get("id", f"img_{i+1:03d}")
@@ -912,6 +947,7 @@ def image_gen_node(state: ContentState) -> ContentState:
             logger.error("%s failed: %s", pid, result.error)
 
     state["generated_images"] = generated
+    state["generated_cover"] = generated_cover
     # 自动构建 selected_images（每个 placement 直接选中唯一的图）
     state["selected_images"] = {
         g["placement_id"]: "A"
@@ -919,6 +955,7 @@ def image_gen_node(state: ContentState) -> ContentState:
     }
     state["current_stage"] = "image_gen"
     _save_artifact(run_id, "generated_images.json", json.dumps(generated, ensure_ascii=False, indent=2))
+    _save_artifact(run_id, "generated_cover.json", json.dumps(generated_cover, ensure_ascii=False, indent=2))
     _save_state(state)
     return state
 
@@ -942,6 +979,7 @@ def formatter_node(state: ContentState) -> ContentState:
     platform = state.get("platform", "wechat")
     visual_plan = state.get("visual_plan", {})
     run_id = state["run_id"]
+    generated_cover = state.get("generated_cover", {})
 
     # ── Step 1: Markdown → 微信兼容 HTML ──
 
@@ -983,6 +1021,10 @@ def formatter_node(state: ContentState) -> ContentState:
     config = load_pipeline_config()
     author = config.get("wechat", {}).get("author", "ContentPipe")
 
+    cover_url = ""
+    if isinstance(generated_cover, dict) and generated_cover.get("success") and generated_cover.get("file_path"):
+        cover_url = f"/api/runs/{run_id}/images/{os.path.basename(generated_cover['file_path'])}"
+
     tpl = jinja2.Template(template_str)
     html = tpl.render(
         title=article.get("title", ""),
@@ -992,6 +1034,7 @@ def formatter_node(state: ContentState) -> ContentState:
         lead=article.get("subtitle", ""),
         content=content_html,
         category=", ".join(state.get("topic", {}).get("keywords", [])[:2]),
+        cover_url=cover_url,
     )
 
     state["formatted_html"] = html
@@ -1368,9 +1411,17 @@ def _publish_wechat(state: dict, config: dict) -> dict:
         html = state.get("formatted_html", "")
         selected = state.get("selected_images", {})
         generated = state.get("generated_images", [])
+        generated_cover = state.get("generated_cover", {})
         run_id = state["run_id"]
 
         cdn_replacements = {}
+        if isinstance(generated_cover, dict) and generated_cover.get("success") and generated_cover.get("file_path"):
+            cover_file = generated_cover["file_path"]
+            if os.path.exists(cover_file):
+                cover_cdn_url = wechat_upload_image(token, open(cover_file, "rb").read(), os.path.basename(cover_file))
+                local_cover_url = f"/api/runs/{run_id}/images/{os.path.basename(cover_file)}"
+                cdn_replacements[local_cover_url] = cover_cdn_url
+                logger.info("Uploaded cover -> %s...", cover_cdn_url[:60])
         for pid, option in selected.items():
             matched = None
             for img in generated:
@@ -1397,20 +1448,23 @@ def _publish_wechat(state: dict, config: dict) -> dict:
 
         # 3. 选择并上传封面素材（P0: 先复用首张成功图；后续再接专门 cover 生成）
         cover_file_path = ""
-        for pid, option in selected.items():
-            matched = None
-            for img in generated:
-                if img.get("placement_id") == pid and img.get("option") == option and img.get("success") and img.get("file_path"):
-                    matched = img
-                    break
-            if matched is None:
+        if isinstance(generated_cover, dict) and generated_cover.get("success") and generated_cover.get("file_path"):
+            cover_file_path = generated_cover["file_path"]
+        if not cover_file_path:
+            for pid, option in selected.items():
+                matched = None
                 for img in generated:
-                    if img.get("placement_id") == pid and img.get("success") and img.get("file_path"):
+                    if img.get("placement_id") == pid and img.get("option") == option and img.get("success") and img.get("file_path"):
                         matched = img
                         break
-            if matched:
-                cover_file_path = matched["file_path"]
-                break
+                if matched is None:
+                    for img in generated:
+                        if img.get("placement_id") == pid and img.get("success") and img.get("file_path"):
+                            matched = img
+                            break
+                if matched:
+                    cover_file_path = matched["file_path"]
+                    break
         if not cover_file_path:
             for img in generated:
                 if img.get("success") and img.get("file_path"):

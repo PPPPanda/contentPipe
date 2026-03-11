@@ -91,6 +91,15 @@ class GeneratedImage(TypedDict, total=False):
     generation_time_ms: int
 
 
+class GeneratedCover(TypedDict, total=False):
+    file_path: str
+    engine: str
+    prompt_used: str
+    generation_time_ms: int
+    success: bool
+    error: str
+
+
 class PublishResult(TypedDict, total=False):
     platform: str
     status: str                  # draft / published / failed
@@ -142,6 +151,7 @@ class ContentState(TypedDict, total=False):
 
     # ── ImageGen 输出 ──
     generated_images: list[GeneratedImage]
+    generated_cover: GeneratedCover
 
     # ── 用户图片选择 ──
     selected_images: dict        # {img_001: "A", img_002: "C", ...}

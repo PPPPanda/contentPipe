@@ -19,6 +19,12 @@
     <p style="font-size:13px;color:#999;margin:0;">{{author}} · {{date}}</p>
   </section>
 
+  {% if cover_url %}
+  <section style="margin:0 0 20px 0;">
+    <img src="{{cover_url}}" style="width:100%;border-radius:10px;display:block;" />
+  </section>
+  {% endif %}
+
   <!-- 导语区 -->
   <section style="background:#f7f7f7;border-left:4px solid {{accent_color|default('#07c160')}};padding:12px 16px;margin-bottom:24px;border-radius:0 4px 4px 0;">
     <p style="font-size:15px;color:#666;margin:0;line-height:1.6;">{{lead}}</p>

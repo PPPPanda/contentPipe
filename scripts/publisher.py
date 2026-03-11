@@ -106,6 +106,14 @@ def publish_wechat(output_dir: Path) -> dict:
         # 上传图片到 CDN
         selected = state.get("selected_images", {})
         generated = state.get("generated_images", [])
+        generated_cover = state.get("generated_cover", {})
+        if isinstance(generated_cover, dict) and generated_cover.get("success") and generated_cover.get("file_path"):
+            cf = generated_cover["file_path"]
+            if os.path.exists(cf):
+                cover_cdn_url = wechat_upload_image(token, open(cf, "rb").read(), os.path.basename(cf))
+                local_cover_url = f"/api/runs/{run_id}/images/{os.path.basename(cf)}"
+                html = html.replace(local_cover_url, cover_cdn_url)
+                logger.info("cover -> %s...", cover_cdn_url[:50])
         for pid, option in selected.items():
             matched = None
             for img in generated:
@@ -126,23 +134,28 @@ def publish_wechat(output_dir: Path) -> dict:
                     logger.info("%s -> %s...", pid, cdn_url[:50])
 
         cover_file_path = ""
-        for pid, option in selected.items():
-            matched = None
-            for img in generated:
-                if img.get("placement_id") == pid and img.get("option") == option:
-                    fpath = img.get("file_path", "")
-                    if fpath and os.path.exists(fpath):
-                        matched = img
-                        break
-            if matched is None:
+        if isinstance(generated_cover, dict):
+            fpath = generated_cover.get("file_path", "")
+            if generated_cover.get("success") and fpath and os.path.exists(fpath):
+                cover_file_path = fpath
+        if not cover_file_path:
+            for pid, option in selected.items():
+                matched = None
                 for img in generated:
-                    fpath = img.get("file_path", "")
-                    if img.get("placement_id") == pid and img.get("success") and fpath and os.path.exists(fpath):
-                        matched = img
-                        break
-            if matched:
-                cover_file_path = matched["file_path"]
-                break
+                    if img.get("placement_id") == pid and img.get("option") == option:
+                        fpath = img.get("file_path", "")
+                        if fpath and os.path.exists(fpath):
+                            matched = img
+                            break
+                if matched is None:
+                    for img in generated:
+                        fpath = img.get("file_path", "")
+                        if img.get("placement_id") == pid and img.get("success") and fpath and os.path.exists(fpath):
+                            matched = img
+                            break
+                if matched:
+                    cover_file_path = matched["file_path"]
+                    break
         if not cover_file_path:
             for img in generated:
                 fpath = img.get("file_path", "")

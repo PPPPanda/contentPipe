@@ -337,8 +337,12 @@ def get_node_output(run_id: str, node_id: str) -> dict:
 
     def _image_gen(s):
         imgs = s.get("generated_images", [])
+        cover = s.get("generated_cover", {})
         ok = sum(1 for i in imgs if i.get("success"))
-        items = [{"label": "🖼️ 生成结果", "value": f"{ok}/{len(imgs)} 张成功"}]
+        items = [
+            {"label": "🖼️ 正文配图", "value": f"{ok}/{len(imgs)} 张成功"},
+            {"label": "🧷 封面图", "value": "✅ 已生成" if cover.get("success") else (cover.get("error", "⏳ 待生成")[:80] if isinstance(cover.get("error"), str) else "⏳ 待生成")},
+        ]
         for img in imgs:
             pid = img.get("placement_id", "?")
             if img.get("success"):
