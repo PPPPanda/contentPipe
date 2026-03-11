@@ -923,6 +923,12 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
         f"{'用户' if m['role'] == 'user' else 'AI'}: {m['content'][:200]}"
         for m in visible[-6:]
     )
+    recent_urls: list[str] = []
+    for m in visible[-6:]:
+        for url in re.findall(r'https?://\S+', m.get('content', '')):
+            cleaned = url.rstrip(",.;，。；）)]】」』")
+            if cleaned and cleaned not in recent_urls:
+                recent_urls.append(cleaned)
 
     # ── Step 2a: 文章节点 — 同步文章内容 ──
     if is_article_node:
@@ -933,17 +939,21 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
         # 文章改写用 Writer 同一个 model（保持风格一致）
         from nodes import _get_model
         writer_model = _get_model("writer") or "dashscope/qwen3.5-plus"
-        sync_result = await loop.run_in_executor(
-            None,
-            lambda: call_llm(
-                "你是文章编辑助手。根据用户要求修改文章，只输出修改后的完整 Markdown 文章，不要输出任何解释。",
-                f"""用户在审核对话中要求修改文章。请按要求修改。
+        sync_context = f"""用户在审核对话中要求修改文章。请按要求修改。
 
 ## 规则
 1. 只修改用户明确要求改的部分
 2. 保持文章整体结构和其他内容不变
 3. 输出完整的修改后文章（Markdown 格式）
 4. 不要输出任何解释文字，只输出文章
+"""
+        if recent_urls:
+            sync_context += (
+                "\n5. 如果最近对话里贴了参考链接，优先使用 contentpipe-style-reference / contentpipe-url-reader / contentpipe-wechat-reader 提炼其风格或结构，再应用到文章，不要直接照抄原文。\n"
+                + "\n## 最近对话中的参考链接\n"
+                + json.dumps(recent_urls, ensure_ascii=False, indent=2)
+            )
+        sync_context += f"""
 
 ## 当前文章
 {article_edited}
@@ -951,7 +961,13 @@ async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
 ## 最近对话（包含修改要求）
 {recent_chat}
 
-输出修改后的完整文章：""",
+输出修改后的完整文章："""
+
+        sync_result = await loop.run_in_executor(
+            None,
+            lambda: call_llm(
+                "你是文章编辑助手。根据用户要求修改文章，只输出修改后的完整 Markdown 文章，不要输出任何解释。",
+                sync_context,
                 model=writer_model,
                 max_tokens=8192,
                 gateway_session_key=build_contentpipe_session_key(run_id, node_id, "article-sync"),

@@ -451,6 +451,23 @@ def researcher_node(state: ContentState) -> ContentState:
     return state
 
 
+def _collect_style_reference_urls(state: ContentState) -> list[str]:
+    urls: list[str] = []
+    for url in state.get("reference_urls", []) or []:
+        if url and url not in urls:
+            urls.append(url)
+    topic = state.get("topic", {}) or {}
+    for url in topic.get("reference_urls", []) or []:
+        if url and url not in urls:
+            urls.append(url)
+    for ra in state.get("reference_articles", []) or []:
+        if isinstance(ra, dict):
+            url = str(ra.get("url", "")).strip()
+            if url and url not in urls:
+                urls.append(url)
+    return urls
+
+
 def _build_writer_context(state: ContentState) -> dict:
     """组装 writer_context — Writer 的完整写作上下文包
 
@@ -467,6 +484,7 @@ def _build_writer_context(state: ContentState) -> dict:
     user_requirements = state.get("user_requirements", {})
     reference_articles = state.get("reference_articles", [])
     open_issues = state.get("open_issues", [])
+    style_reference_urls = _collect_style_reference_urls(state)
 
     ctx: dict = {}
 
@@ -508,6 +526,8 @@ def _build_writer_context(state: ContentState) -> dict:
     # ── 执行层 ──
     if writer_brief:
         ctx["writer_brief"] = writer_brief
+    if style_reference_urls:
+        ctx["style_reference_urls"] = style_reference_urls
 
     # ── 证据材料层 ──
     if writer_packet:
@@ -562,6 +582,7 @@ def writer_node(state: ContentState) -> ContentState:
     _save_artifact(state["run_id"], "writer_context.yaml", yaml.dump(writer_context, allow_unicode=True, default_flow_style=False))
 
     topic = state.get("topic", {})
+    style_reference_urls = _collect_style_reference_urls(state)
 
     # 兼容旧 schema：如果没有新结构，fallback 到旧格式
     if not state.get("writer_packet") and not state.get("writer_brief"):
@@ -575,6 +596,11 @@ def writer_node(state: ContentState) -> ContentState:
         ])
     else:
         context = f"以下是你的完整写作上下文包（writer_context），包含立题层、执行层、证据材料层三层信息。\n\n{yaml.dump(writer_context, allow_unicode=True, default_flow_style=False)}"
+        if style_reference_urls:
+            context += (
+                "\n\n--- 风格参考链接（优先使用 contentpipe-style-reference 提炼，不要直接照抄） ---\n"
+                + json.dumps(style_reference_urls, ensure_ascii=False, indent=2)
+            )
 
     result, content = _call_llm_to_file_with_session(
         state,
@@ -605,6 +631,11 @@ def writer_node(state: ContentState) -> ContentState:
         f"话题分类: {', '.join(state.get('topic', {}).get('keywords', []))}",
         f"\n--- 原始文章 ---\n{content}",
     ]
+    if style_reference_urls:
+        de_ai_context_parts.append(
+            "\n--- 风格参考链接（优先使用 contentpipe-style-reference 提炼，不要直接照抄） ---\n"
+            + json.dumps(style_reference_urls, ensure_ascii=False, indent=2)
+        )
     de_ai_context = "\n".join(de_ai_context_parts)
 
     # 去 AI 味用 Sonnet 4.6（文笔+对抗检测），独立 session 不混入 writer 对话
@@ -644,11 +675,17 @@ def de_ai_editor_node(state: ContentState) -> ContentState:
     prompt = _read_prompt("de-ai-engine.md")
     article = state.get("article", {})
 
+    style_reference_urls = _collect_style_reference_urls(state)
     context_parts = [
         f"平台: {state.get('platform', 'wechat')}",
         f"话题分类: {', '.join(state.get('topic', {}).get('keywords', []))}",
         f"\n--- 原始文章 ---\n{article.get('content', '')}",
     ]
+    if style_reference_urls:
+        context_parts.append(
+            "\n--- 风格参考链接（优先使用 contentpipe-style-reference 提炼，不要直接照抄） ---\n"
+            + json.dumps(style_reference_urls, ensure_ascii=False, indent=2)
+        )
     context = "\n".join(context_parts)
 
     reply, file_content = _call_llm_to_file_with_session(
