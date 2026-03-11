@@ -133,6 +133,7 @@ plugins/content-pipeline/skills/
 - `contentpipe-wechat-reader`
 - `contentpipe-url-reader`
 - `contentpipe-web-research`
+- `contentpipe-social-research`
 
 ### 3.2 目录结构
 
