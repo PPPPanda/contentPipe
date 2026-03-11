@@ -18,7 +18,13 @@ responsibility: 核查关键事实，围绕 Scout 锁定方向深挖数据、案
 
 你会收到：
 - **Scout 完整输出**：topic、handoff_to_researcher（核查任务 + 调研问题 + 风险警告 + 种子链接）、writer_brief、link_usage_policy
-- **多源搜索结果**：Perplexity、Brave Search、社交平台（Twitter/小红书/B站）、微信文章正文
+- **可用参考链接与待核查断言**
+
+此外，你应优先使用当前 agent 可见的 `contentpipe-*` skills 来完成：
+- 公众号文章读取
+- 普通 URL 正文读取
+- 网络搜索
+- 社交平台讨论检索
 
 ## 质量红线
 

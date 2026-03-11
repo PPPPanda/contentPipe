@@ -23,7 +23,7 @@ import yaml
 from gateway_auth import build_contentpipe_session_key
 from logutil import get_logger
 from state import ContentState
-from tools import call_llm, search_web, search_perplexity, fetch_hotnews, search_social, load_pipeline_config, fetch_wechat_article, is_wechat_url
+from tools import call_llm, load_pipeline_config
 from validators import (
     ValidationResult,
     build_validation_retry_message,
@@ -271,55 +271,28 @@ def scout_node(state: ContentState) -> ContentState:
     platform = state.get("platform", "wechat")
     user_topic = state.get("user_topic", "")  # 用户指定的选题/参考链接
 
-    # 0. 提取用户输入中的微信文章链接
-    wechat_refs = []
-    import re as _re
-    urls_in_topic = _re.findall(r'https?://mp\.weixin\.qq\.com/s/\S+', user_topic)
-    urls_in_topic += state.get("reference_urls", [])
-    for url in urls_in_topic:
-        url = url.rstrip(",.;，。；")
-        if is_wechat_url(url):
-            logger.info("Scout 提取参考文章: %s...", url[:60])
-            result = fetch_wechat_article(url)
-            if result.get("success"):
-                wechat_refs.append({
-                    "url": url,
-                    "title": result.get("title", ""),
-                    "author": result.get("author", ""),
-                    "content": result.get("content", "")[:3000],
-                    "word_count": result.get("word_count", 0),
-                })
-                logger.info("提取成功: %s (%s 字)", result.get("title", "?"), result.get("word_count", 0))
-            else:
-                logger.error("提取失败: %s", result.get("error", "?"))
+    # Skill-driven 模式：不再由 Python 预抓取公众号正文/搜索结果，改由 blank-agent 调用内置 skills
+    reference_urls = list(state.get("reference_urls", []))
+    urls_in_topic = re.findall(r'https?://\S+', user_topic)
+    for raw_url in urls_in_topic:
+        cleaned = raw_url.rstrip(",.;，。；）)]】」』")
+        if cleaned and cleaned not in reference_urls:
+            reference_urls.append(cleaned)
 
-    # 1. 获取多平台热搜
-    logger.info("获取多平台热搜...")
-    hotnews = fetch_hotnews()
-
-    # 2. Brave Search 网络搜索
     search_query = user_topic if user_topic else "近期热门话题 AI 科技 2026"
-    logger.info("Brave Search: %s...", search_query[:40])
-    web_results = search_web(search_query, count=10)
-
-    # 3. 🆕 社交平台搜索（agent-reach）
     social_query = user_topic if user_topic else "AI 一人公司 Agent"
-    logger.info("社交平台搜索: %s...", social_query[:40])
-    social_results = search_social(social_query, platforms=["twitter", "xiaohongshu"])
 
-    # 4. 组装上下文
     context_parts = [
         f"目标平台: {platform}",
         f"账号领域: AI、科技、互联网、产品",
+        "执行模式: skill-driven。请优先使用可见的 contentpipe-* skills 处理公众号链接、普通 URL、网络搜索与社交讨论检索。",
+        "不要假装已经看到外部搜索结果；需要时请自行调用可用 skills / tools，再输出最终 YAML。",
     ]
     if user_topic:
         context_parts.append(f"\n--- 用户指定选题/参考 ---\n{user_topic}")
-    if wechat_refs:
-        context_parts.append(f"\n--- 参考文章正文（已提取） ---\n{json.dumps(wechat_refs, ensure_ascii=False, indent=2)}")
-    context_parts.append(f"\n--- 多平台热搜 ---\n{json.dumps(hotnews, ensure_ascii=False, indent=2)}")
-    context_parts.append(f"\n--- 网络搜索结果 ---\n{json.dumps(web_results, ensure_ascii=False, indent=2)}")
-    if social_results:
-        context_parts.append(f"\n--- 社交平台讨论（Twitter/小红书） ---\n{json.dumps(social_results, ensure_ascii=False, indent=2)}")
+    if reference_urls:
+        context_parts.append(f"\n--- 用户提供的参考链接（请自行读取/筛选） ---\n{json.dumps(reference_urls, ensure_ascii=False, indent=2)}")
+    context_parts.append(f"\n--- 建议搜索主题 ---\n主搜索: {search_query}\n社交搜索: {social_query}")
     context = "\n".join(context_parts)
 
     result, topic_yaml, parsed = _call_llm_to_validated_file_with_session(
@@ -363,10 +336,8 @@ def scout_node(state: ContentState) -> ContentState:
     # 执行元信息
     state["_node_context"] = state.get("_node_context", {})
     state["_node_context"]["scout"] = {
-        "hotnews_summary": {k: len(v) for k, v in hotnews.items()},
-        "web_results_count": len(web_results),
-        "social_results": {k: len(v) for k, v in social_results.items()},
-        "wechat_refs": [{"title": r["title"], "url": r["url"]} for r in wechat_refs],
+        "mode": "skill-driven",
+        "reference_urls": reference_urls,
         "search_query": search_query,
         "social_query": social_query,
     }
@@ -393,59 +364,21 @@ def researcher_node(state: ContentState) -> ContentState:
     reference_articles = state.get("reference_articles", [])
     link_usage_policy = state.get("link_usage_policy", {})
 
-    # 1. Perplexity 深度搜索
-    perplexity_result = search_perplexity(
-        f"{title} {' '.join(keywords) if keywords else ''} 最新趋势 数据 案例 2026"
-    )
-
-    # 2. 网络搜索 — 按 research_questions 的 seed_urls 和话题搜
-    web_results = search_web(f"{title} {' '.join(keywords[:2]) if keywords else ''}", count=10)
-    web_results_cn = search_web(f"{title} 分析 案例 数据", count=5)
-
-    # 2.5 按 verification_targets 搜索补充验证
+    # Skill-driven 模式：Researcher 由 blank-agent 自主调用内置读取/搜索 skills
     verification_targets = handoff.get("verification_targets", [])
-    for vt in verification_targets[:3]:  # 最多搜 3 个
-        claim = vt.get("claim_text", "")
-        if claim:
-            logger.info("核查: %s...", claim[:40])
-            extra = search_web(claim, count=3)
-            web_results.extend(extra)
-
-    # 3. 初始来源（Scout direction_references + research_reference_pool）
     sources = topic.get("sources", topic.get("direction_references", []))
     research_pool = handoff.get("research_reference_pool", [])
-
-    # 4. 自动提取微信文章正文
-    wechat_articles = []
     all_urls = [s.get("url", "") if isinstance(s, dict) else str(s) for s in sources]
     all_urls += [r.get("url", "") for r in research_pool]
     all_urls += topic.get("reference_urls", [])
-    for url in all_urls:
-        if is_wechat_url(url):
-            logger.info("提取微信文章: %s...", url[:60])
-            result = fetch_wechat_article(url)
-            if result.get("success"):
-                wechat_articles.append({
-                    "url": url,
-                    "title": result.get("title", ""),
-                    "author": result.get("author", ""),
-                    "content": result.get("content", "")[:3000],
-                    "word_count": result.get("word_count", 0),
-                })
-                logger.info("提取成功: %s (%s 字)", result.get("title", "?"), result.get("word_count", 0))
-            else:
-                logger.error("提取失败: %s", result.get("error", "?"))
+    all_urls = [u for u in all_urls if u]
+    social_query = f"{title} {' '.join(keywords[:2]) if keywords else ''}".strip()
 
-    # 5. 社交平台深度搜索（agent-reach）
-    social_query = f"{title} {' '.join(keywords[:2]) if keywords else ''}"
-    logger.info("社交平台深度搜索: %s...", social_query[:40])
-    social_results = search_social(social_query, platforms=["twitter", "xiaohongshu", "bilibili"])
-
-    # 6. 组装上下文
     context_parts = [
         f"选题: {title}",
         f"角度: {angle}",
         f"目标平台: {state.get('platform', 'wechat')}",
+        "执行模式: skill-driven。请优先使用可见的 contentpipe-* skills 执行链接阅读、网页研究、社交搜索与事实核查，不要假装已经拿到了外部检索结果。",
     ]
     # Scout handoff 任务清单（核心输入）
     if handoff:
@@ -454,15 +387,16 @@ def researcher_node(state: ContentState) -> ContentState:
         context_parts.append(f"\n--- Writer Brief（了解最终需要什么） ---\n{yaml.dump(writer_brief, allow_unicode=True, default_flow_style=False)}")
     if link_usage_policy:
         context_parts.append(f"\n--- 链接使用策略 ---\n{yaml.dump(link_usage_policy, allow_unicode=True, default_flow_style=False)}")
-    # 搜索结果
-    context_parts.append(f"\n--- Perplexity 深度搜索结果 ---\n{perplexity_result}")
-    context_parts.append(f"\n--- 网络搜索结果 ---\n{json.dumps(web_results + web_results_cn, ensure_ascii=False, indent=2)}")
-    if social_results:
-        context_parts.append(f"\n--- 社交平台讨论（Twitter/小红书/B站） ---\n{json.dumps(social_results, ensure_ascii=False, indent=2)}")
-    if wechat_articles:
-        context_parts.append(f"\n--- 微信文章正文（已提取） ---\n{json.dumps(wechat_articles, ensure_ascii=False, indent=2)}")
+    if verification_targets:
+        context_parts.append(f"\n--- 待核查断言（请逐条自行查证） ---\n{yaml.dump(verification_targets, allow_unicode=True, default_flow_style=False)}")
+    if research_pool:
+        context_parts.append(f"\n--- 待深查种子链接（请自行读取/验证） ---\n{yaml.dump(research_pool, allow_unicode=True, default_flow_style=False)}")
+    if all_urls:
+        context_parts.append(f"\n--- 可用参考链接（请按需读取） ---\n{json.dumps(all_urls, ensure_ascii=False, indent=2)}")
     if sources:
-        context_parts.append(f"\n--- 初始来源 ---\n{json.dumps(sources, ensure_ascii=False, indent=2)}")
+        context_parts.append(f"\n--- 初始来源元数据 ---\n{json.dumps(sources, ensure_ascii=False, indent=2)}")
+    if social_query:
+        context_parts.append(f"\n--- 建议社交/社区检索主题 ---\n{social_query}")
 
     context = "\n".join(context_parts)
 
@@ -502,10 +436,9 @@ def researcher_node(state: ContentState) -> ContentState:
     # 执行元信息
     state["_node_context"] = state.get("_node_context", {})
     state["_node_context"]["researcher"] = {
-        "perplexity_available": bool(perplexity_result and perplexity_result != "Perplexity 搜索不可用（未配置）"),
-        "web_results_count": len(web_results) + len(web_results_cn),
-        "social_results": {k: len(v) for k, v in social_results.items()},
-        "wechat_articles": [{"title": a["title"], "url": a["url"]} for a in wechat_articles],
+        "mode": "skill-driven",
+        "reference_url_count": len(all_urls),
+        "verification_target_count": len(verification_targets),
         "verification_count": len(verification_results),
         "verified_count": sum(1 for v in verification_results if v.get("status") == "verified"),
         "sources_count": len(source_registry),
