@@ -24,6 +24,14 @@ from gateway_auth import build_contentpipe_session_key
 from logutil import get_logger
 from state import ContentState
 from tools import call_llm, search_web, search_perplexity, fetch_hotnews, search_social, load_pipeline_config, fetch_wechat_article, is_wechat_url
+from validators import (
+    ValidationResult,
+    build_validation_retry_message,
+    validate_image_candidates_json,
+    validate_research_yaml,
+    validate_topic_yaml,
+    validate_visual_plan_json,
+)
 
 logger = get_logger(__name__)
 
@@ -184,6 +192,77 @@ def _call_llm_to_file_with_session(
     return agent_reply, content
 
 
+def _call_llm_to_validated_file_with_session(
+    state: ContentState,
+    node_id: str,
+    prompt: str,
+    context: str,
+    *,
+    model: str | None,
+    output_filename: str,
+    output_kind: str,
+    validator,
+    max_tokens: int = 8192,
+    max_attempts: int = 3,
+) -> tuple[str, str, object]:
+    last_reply = ""
+    last_content = ""
+    last_validation: ValidationResult | None = None
+
+    for attempt in range(1, max_attempts + 1):
+        agent_reply, content = _call_llm_to_file_with_session(
+            state,
+            node_id,
+            prompt,
+            context,
+            model=model,
+            output_filename=output_filename,
+            output_kind=output_kind,
+            max_tokens=max_tokens,
+        )
+        payload = (content or agent_reply).strip()
+        validation = validator(payload)
+        if validation.ok:
+            normalized = validation.normalized_text or payload
+            _save_artifact(state["run_id"], output_filename, normalized)
+            return agent_reply, normalized, validation.parsed
+
+        last_reply = agent_reply
+        last_content = payload
+        last_validation = validation
+        logger.warning(
+            "%s validation failed (attempt %s/%s): %s | %s",
+            output_filename,
+            attempt,
+            max_attempts,
+            validation.message,
+            "; ".join(validation.details[:3]),
+        )
+        _append_node_session(
+            state,
+            node_id,
+            "user",
+            build_validation_retry_message(output_filename, output_kind, validation),
+            tag=f"{node_id}_validation",
+            internal=True,
+        )
+
+    if last_validation is not None:
+        _save_artifact(
+            state["run_id"],
+            f"{Path(output_filename).stem}.validation-error.txt",
+            build_validation_retry_message(output_filename, output_kind, last_validation)
+            + "\n\n--- invalid content snapshot ---\n"
+            + last_content[:4000],
+        )
+        raise ValueError(
+            f"{output_filename} validation failed after {max_attempts} attempts: "
+            f"{last_validation.message} | {'; '.join(last_validation.details[:5])}"
+        )
+
+    raise ValueError(f"{output_filename} validation failed without validator result")
+
+
 # ── Agent 节点 ────────────────────────────────────────────────
 
 def scout_node(state: ContentState) -> ContentState:
@@ -243,7 +322,7 @@ def scout_node(state: ContentState) -> ContentState:
         context_parts.append(f"\n--- 社交平台讨论（Twitter/小红书） ---\n{json.dumps(social_results, ensure_ascii=False, indent=2)}")
     context = "\n".join(context_parts)
 
-    result, topic_yaml = _call_llm_to_file_with_session(
+    result, topic_yaml, parsed = _call_llm_to_validated_file_with_session(
         state,
         "scout",
         prompt,
@@ -251,16 +330,9 @@ def scout_node(state: ContentState) -> ContentState:
         model=_get_model("scout"),
         output_filename="topic.yaml",
         output_kind="YAML briefing document",
+        validator=validate_topic_yaml,
         max_tokens=8192,
     )
-
-    # 解析 YAML 输出（优先读文件产物）
-    try:
-        parsed = yaml.safe_load(_strip_code_fence(topic_yaml or result))
-        if not isinstance(parsed, dict):
-            parsed = {"topic": {"title": "解析失败"}}
-    except Exception:
-        parsed = {"topic": {"title": "解析失败"}}
 
     # 从新 schema 提取各部分
     topic = parsed.get("topic", {})
@@ -394,7 +466,7 @@ def researcher_node(state: ContentState) -> ContentState:
 
     context = "\n".join(context_parts)
 
-    result, research_yaml = _call_llm_to_file_with_session(
+    result, research_yaml, parsed = _call_llm_to_validated_file_with_session(
         state,
         "researcher",
         prompt,
@@ -402,16 +474,9 @@ def researcher_node(state: ContentState) -> ContentState:
         model=_get_model("researcher"),
         output_filename="research.yaml",
         output_kind="YAML research packet",
+        validator=validate_research_yaml,
         max_tokens=8192,
     )
-
-    # 解析 YAML 输出（优先读文件产物）
-    try:
-        parsed = yaml.safe_load(_strip_code_fence(research_yaml or result))
-        if not isinstance(parsed, dict):
-            parsed = {"raw": result}
-    except Exception:
-        parsed = {"raw": result}
 
     # 从新 schema 提取各部分
     research = parsed  # 完整保存
@@ -697,7 +762,7 @@ def director_node(state: ContentState) -> ContentState:
             context_parts.append(f"\n--- 上一版配图方案 ---\n{json.dumps(prev_plan, ensure_ascii=False)}")
 
     context = "\n".join(context_parts)
-    result, visual_plan_text = _call_llm_to_file_with_session(
+    result, visual_plan_text, visual_plan = _call_llm_to_validated_file_with_session(
         state,
         "director",
         prompt,
@@ -705,23 +770,12 @@ def director_node(state: ContentState) -> ContentState:
         model=_get_model("director"),
         output_filename="visual_plan.json",
         output_kind="JSON visual plan",
+        validator=validate_visual_plan_json,
         max_tokens=8192,
     )
 
     # 保存原始输出（调试用）
     _save_artifact(state["run_id"], "director_raw.txt", result)
-
-    try:
-        visual_plan = json.loads(_strip_code_fence(visual_plan_text or result))
-    except (json.JSONDecodeError, ValueError):
-        # LLM 返回的 JSON 可能有尾部逗号或注释，尝试修复
-        cleaned = _strip_code_fence(result)
-        cleaned = re.sub(r',\s*([}\]])', r'\1', cleaned)
-        cleaned = re.sub(r'//[^\n]*', '', cleaned)
-        try:
-            visual_plan = json.loads(cleaned)
-        except (json.JSONDecodeError, ValueError):
-            visual_plan = {"style": "default", "global_tone": "", "placements": []}
 
     state["visual_plan"] = visual_plan
     state["current_stage"] = "director"
@@ -749,7 +803,8 @@ def director_refine_node(state: ContentState) -> ContentState:
         context_parts.append(f"\n--- 用户修改意见 ---\n{json.dumps(feedback, ensure_ascii=False)}")
 
     context = "\n".join(context_parts)
-    result, image_candidates_text = _call_llm_to_file_with_session(
+    expected_ids = [str(p.get("id", "")).strip() for p in visual_plan.get("placements", []) if str(p.get("id", "")).strip()]
+    result, image_candidates_text, image_candidates = _call_llm_to_validated_file_with_session(
         state,
         "director_refine",
         prompt,
@@ -757,21 +812,11 @@ def director_refine_node(state: ContentState) -> ContentState:
         model=_get_model("director_refine"),
         output_filename="image_candidates.json",
         output_kind="JSON image candidates array",
+        validator=lambda text: validate_image_candidates_json(text, expected_ids=expected_ids),
         max_tokens=8192,
     )
 
     _save_artifact(state["run_id"], "director_refine_raw.txt", result)
-
-    try:
-        image_candidates = json.loads(_strip_code_fence(image_candidates_text or result))
-    except (json.JSONDecodeError, ValueError):
-        cleaned = _strip_code_fence(result)
-        cleaned = re.sub(r',\s*([}\]])', r'\1', cleaned)
-        cleaned = re.sub(r'//[^\n]*', '', cleaned)
-        try:
-            image_candidates = json.loads(cleaned)
-        except (json.JSONDecodeError, ValueError):
-            image_candidates = []
 
     state["image_candidates"] = image_candidates
     state["current_stage"] = "director_refine"
