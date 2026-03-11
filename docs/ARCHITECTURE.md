@@ -1,6 +1,6 @@
-# ContentPipe Architecture v0.7.0
+# ContentPipe Architecture v0.7.1
 
-> 最后更新: 2026-03-10
+> 最后更新: 2026-03-11
 > 形态: OpenClaw Plugin（managed-service）
 
 ## 1. 设计哲学
@@ -37,10 +37,26 @@
 │  └─────────────────────────────────────────┘            │
 ├─────────────────────────────────────────────────────────┤
 │                    LLM Gateway                           │
-│  OpenClaw Gateway (localhost:18789)                       │
-│  DashScope / Anthropic / OpenAI                          │
+│  OpenClaw Gateway (localhost:18789)                      │
+│  provider models + explicit blank-agent routing          │
 └─────────────────────────────────────────────────────────┘
 ```
+
+### 2.1 blank-agent 执行平面（v0.7.1）
+
+为降低 OpenClaw 常规 agent 提示词/工作区污染，Gateway 模式下新增一条显式执行平面：
+
+- ContentPipe 通过 `x-openclaw-agent-id: contentpipe-blank` 路由到空白 agent
+- 同时保留独立 `x-openclaw-session-key`，保证每个 run / node 的上下文隔离
+- blank-agent 的职责不是返回一段“可解析聊天文本”，而是**直接把正式产物写入项目目录**
+- Pipeline 下游节点以文件为准，不以聊天输出为准
+
+当前正式约束：
+
+- agent id: `contentpipe-blank`
+- 安装方式：`./start.sh install-agent`
+- 生效方式：`openclaw gateway restart`
+- 正式产物路径：`plugins/content-pipeline/output/runs/<run_id>/`
 
 ## 3. Session 架构
 
@@ -55,6 +71,13 @@ output/runs/{run_id}/
 ├── chat_writer.json        ← Writer 执行 + 审核聊天
 ├── chat_director.json      ← Director 执行 + 审核聊天
 └── ...
+```
+
+典型 Gateway 路由键：
+
+```text
+x-openclaw-agent-id: contentpipe-blank
+x-openclaw-session-key: contentpipe:{run_id}:{node_id}:main
 ```
 
 ### 3.2 消息分层：internal vs visible
@@ -217,12 +240,13 @@ Director 审核页面的配图方案面板：
 
 | 角色 | 模型 | 用途 |
 |------|------|------|
-| Scout | dashscope/qwen3.5-plus | 选题分析 |
-| Researcher | dashscope/qwen3.5-plus | 深度调研 |
-| Writer | dashscope/qwen3.5-plus | 写作+审核聊天+审核改写 |
+| Scout | anthropic/claude-sonnet-4-6 | 选题分析 |
+| Researcher | anthropic/claude-sonnet-4-6 | 深度调研 |
+| Writer | openai-codex/gpt-5.4 | 写作主模型 |
 | De-AI Editor | anthropic/claude-sonnet-4-6 | 去 AI 味（独立 session） |
-| Director | dashscope/qwen3.5-plus | 配图方案 |
-| 翻译 | dashscope/qwen3.5-flash | 中文→英文 prompt |
+| Director | anthropic/claude-opus-4-6 | 配图方案 |
+| Director Refine | dashscope/qwen3.5-plus | 配图细化/压缩 |
+| 图像 prompt helper | anthropic/claude-sonnet-4-6 | prompt 翻译/压缩 |
 | 意图判断 | dashscope/qwen3.5-flash | 审核对话是否有修改意图 |
 | YAML 同步 | dashscope/qwen3.5-flash | 对话→YAML 更新 |
 | 聊天节点 | 跟随节点配置 | 审核聊天用该节点同一个 model |
@@ -248,14 +272,16 @@ scout → researcher → writer → director → image_gen → formatter → pub
 ## 10. 文件结构
 
 ```
-skills/content-pipeline/
+plugins/content-pipeline/
 ├── SKILL.md                    # 技能入口
 ├── README.md                   # 快速开始
+├── openclaw.plugin.yaml        # 插件清单
+├── start.sh                    # 服务启动 + install-agent
 ├── docs/
 │   ├── ARCHITECTURE.md         # 本文件
 │   └── schema-writer-context.yaml
 ├── config/
-│   ├── pipeline.yaml           # 模型配置
+│   ├── pipeline.yaml           # 模型 / gateway 配置
 │   ├── template-mapping.yaml   # 模板匹配规则
 │   └── styles/                 # 风格配置
 ├── prompts/
@@ -287,9 +313,9 @@ skills/content-pipeline/
 │       ├── run_manager.py
 │       ├── routes/
 │       │   ├── pages.py
-│       │   ├── api.py (~700 lines)
+│       │   ├── api.py
 │       │   └── sse.py
-│       └── templates/ (10 页面)
+│       └── templates/
 └── output/
     └── runs/{run_id}/
         ├── state.yaml
@@ -309,6 +335,8 @@ skills/content-pipeline/
             ├── img_002.jpg
             └── ...
 ```
+
+**正式产物约定：** blank-agent 直接写入 `output/runs/{run_id}/`，不再使用 workspace 根下漂移的 `runs/...` 作为兼容路径。
 
 ## 11. 开发进度
 

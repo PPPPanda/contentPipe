@@ -86,7 +86,7 @@ scout → researcher → writer → director → image_gen → formatter → pub
 OpenClaw Gateway
 ├─ LLM 请求转发
 ├─ Discord message API（可选）
-└─ Agent / Skill 调用
+└─ blank-agent 路由（contentpipe-blank）
 
 ContentPipe Service (FastAPI)
 ├─ Web UI（Jinja2 + HTMX）
@@ -95,6 +95,21 @@ ContentPipe Service (FastAPI)
 ├─ Run 状态持久化
 └─ Pipeline 节点执行
 ```
+
+### 3.1.1 blank-agent 执行平面
+
+在 `llm_mode=gateway` 下，ContentPipe 不再默认让节点直接消费聊天窗口里的文本输出，而是优先走一个低污染执行平面：
+
+- Gateway 请求显式路由到 `contentpipe-blank`
+- 每个节点仍保留独立 session key
+- blank-agent 负责把最终产物**直接写入正式项目目录**
+- Pipeline 下游节点只消费正式产物文件，不依赖聊天解释文字
+
+当前正式约定：
+
+- agent id: `contentpipe-blank`
+- 安装命令：`./start.sh install-agent`
+- 生效命令：`openclaw gateway restart`
 
 ### 3.2 目录结构
 
@@ -151,6 +166,14 @@ content-pipeline/
 - `chat_<node>.json`
 - `images/*`
 
+正式产物目录固定为：
+
+```text
+plugins/content-pipeline/output/runs/<run_id>/
+```
+
+在 blank-agent 模式下，节点最终产物也必须直接写入这条正式路径；**不再兼容**旧的临时/漂移写法（例如 workspace 根下的 `runs/...`）。
+
 默认 `.gitignore` 会忽略 `output/runs/`，避免把运行产物、聊天记录、图片和测试数据提交到公开仓库。
 
 ---
@@ -191,15 +214,17 @@ pip install fastapi uvicorn sse-starlette python-multipart jinja2 pyyaml httpx
 ```yaml
 pipeline:
   default_platform: "wechat"
-  llm_mode: "direct"   # 或 gateway
+  llm_mode: "gateway"   # public/default path
   default_llm: "dashscope/qwen3.5-plus"
   gateway_url: "http://localhost:18789"
+  gateway_agent_id: "contentpipe-blank"
   llm_overrides:
-    scout: "dashscope/qwen3.5-plus"
-    researcher: "dashscope/qwen3.5-plus"
+    scout: "anthropic/claude-sonnet-4-6"
+    researcher: "anthropic/claude-sonnet-4-6"
     writer: "openai-codex/gpt-5.4"
     de_ai_editor: "anthropic/claude-sonnet-4-6"
-    director: "dashscope/qwen3.5-plus"
+    director: "anthropic/claude-opus-4-6"
+    director_refine: "dashscope/qwen3.5-plus"
 ```
 
 ### 5.2 环境变量
@@ -318,6 +343,32 @@ python3 -m uvicorn web.app:app --host 0.0.0.0 --port 8765
 curl http://localhost:8765/api/health
 curl http://localhost:8765/api/info
 ```
+
+### 6.4.1 Gateway 模式常见坑
+
+如果你启用了 `llm_mode=gateway`，但发现：
+
+- 节点一直输出解释文字而不是正式 YAML / Markdown / JSON
+- blank-agent 没生效
+- 刚添加完 `contentpipe-blank` 但运行表现还是老配置
+
+优先检查这几项：
+
+1. 是否已经运行：
+   ```bash
+   ./start.sh install-agent
+   ```
+2. 是否已经重启 Gateway：
+   ```bash
+   openclaw gateway restart
+   ```
+3. `config/pipeline.yaml` 中是否仍指向：
+   - `llm_mode: "gateway"`
+   - `gateway_agent_id: "contentpipe-blank"`
+4. 正式产物是否落在：
+   ```text
+   plugins/content-pipeline/output/runs/<run_id>/
+   ```
 
 ### 6.5 生产部署 / 反向代理 / HTTPS
 

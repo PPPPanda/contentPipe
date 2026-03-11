@@ -76,6 +76,15 @@ CONTENTPIPE_PUBLIC_BASE_URL=https://your-domain.example
 OPENCLAW_GATEWAY_URL=http://host.docker.internal:18789
 ```
 
+If you run in `llm_mode=gateway`, also do this once after deploy/update:
+
+```bash
+./start.sh install-agent
+openclaw gateway restart
+```
+
+This ensures `contentpipe-blank` exists, uses an isolated workspace/agentDir, and can write final artifacts into the official project output directory.
+
 ## Suggested GitHub release title
 
 `v0.7.1 — release hardening, auth, CI, and deployment`
