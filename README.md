@@ -135,6 +135,7 @@ plugins/content-pipeline/skills/
 - `contentpipe-web-research`
 - `contentpipe-social-research`
 - `contentpipe-style-reference`
+- `contentpipe-wechat-draft-publisher`
 
 ### 3.2 目录结构
 

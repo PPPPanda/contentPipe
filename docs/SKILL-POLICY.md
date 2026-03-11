@@ -48,6 +48,7 @@ plugins/content-pipeline/skills/
   "contentpipe-url-reader",
   "contentpipe-web-research",
   "contentpipe-social-research",
+  "contentpipe-style-reference",
   "contentpipe-wechat-draft-publisher"
 ]
 ```
