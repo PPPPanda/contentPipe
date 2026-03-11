@@ -423,38 +423,45 @@ async function sendChat() {
         const data = await resp.json();
         hideTyping();
         appendMsg('assistant', data.content || '(无回复)');
+
+        async function refreshOutputCards() {
+            const outputEl = document.getElementById('node-output-cards');
+            if (!outputEl) return;
+            try {
+                const r = await fetch(`/api/runs/${runId}/nodes/${nodeId}/output`);
+                if (r.ok) {
+                    outputEl.innerHTML = await r.text();
+                    outputEl.style.transition = 'outline 0.3s';
+                    outputEl.style.outline = '2px solid #22c55e';
+                    setTimeout(() => { outputEl.style.outline = 'none'; }, 1500);
+                }
+            } catch(_) {}
+        }
+
+        async function refreshArticle() {
+            const articleEl = document.getElementById('article-display');
+            if (!articleEl) return;
+            try {
+                const r = await fetch(`/api/runs/${runId}/article`);
+                if (r.ok) {
+                    const d = await r.json();
+                    articleEl.textContent = d.content || '';
+                    const editorEl = document.getElementById('article-editor');
+                    if (editorEl) editorEl.value = d.content || '';
+                    articleEl.style.transition = 'outline 0.3s';
+                    articleEl.style.outline = '2px solid #22c55e';
+                    setTimeout(() => { articleEl.style.outline = 'none'; }, 1500);
+                }
+            } catch(_) {}
+        }
+
         // 同步后刷新左栏
         if (data.state_updated) {
-            // 刷新输出卡片
-            const outputEl = document.getElementById('node-output-cards');
-            if (outputEl) {
-                try {
-                    const r = await fetch(`/api/runs/${runId}/nodes/${nodeId}/output`);
-                    if (r.ok) {
-                        outputEl.innerHTML = await r.text();
-                        outputEl.style.transition = 'outline 0.3s';
-                        outputEl.style.outline = '2px solid #22c55e';
-                        setTimeout(() => { outputEl.style.outline = 'none'; }, 1500);
-                    }
-                } catch(_) {}
-            }
-            // Writer: 刷新文章全文
-            const articleEl = document.getElementById('article-display');
-            if (articleEl) {
-                try {
-                    const r = await fetch(`/api/runs/${runId}/article`);
-                    if (r.ok) {
-                        const d = await r.json();
-                        articleEl.textContent = d.content || '';
-                        // 同步到编辑器
-                        const editorEl = document.getElementById('article-editor');
-                        if (editorEl) editorEl.value = d.content || '';
-                        articleEl.style.transition = 'outline 0.3s';
-                        articleEl.style.outline = '2px solid #22c55e';
-                        setTimeout(() => { articleEl.style.outline = 'none'; }, 1500);
-                    }
-                } catch(_) {}
-            }
+            await refreshOutputCards();
+            await refreshArticle();
+        } else if (nodeId === 'writer') {
+            // writer 聊天经常改中后段，哪怕摘要比较没变也要强制刷新全文
+            await refreshArticle();
         }
     } catch(e) {
         hideTyping();

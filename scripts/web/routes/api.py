@@ -420,24 +420,31 @@ async def api_chat(request: Request, run_id: str):
     state_updated = False
     try:
         import copy
+        import hashlib
         old_snapshot = {
             "topic": copy.deepcopy(raw.get("topic", {})),
             "visual_plan": copy.deepcopy(raw.get("visual_plan", {})),
-            "article_edited": raw.get("article_edited", "")[:200],
+            "article_edited": raw.get("article_edited", ""),
             "writer_brief": copy.deepcopy(raw.get("writer_brief", {})),
             "writer_packet": copy.deepcopy(raw.get("writer_packet", {})),
         }
+        old_hash = hashlib.sha256(
+            json.dumps(old_snapshot, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
         await _sync_chat_to_state(run_id, node_id, raw)
         # 重新读取 state（_sync 可能写了磁盘）
         refreshed = _load_raw_state(run_id) or raw
         new_snapshot = {
             "topic": refreshed.get("topic", {}),
             "visual_plan": refreshed.get("visual_plan", {}),
-            "article_edited": refreshed.get("article_edited", "")[:200],
+            "article_edited": refreshed.get("article_edited", ""),
             "writer_brief": refreshed.get("writer_brief", {}),
             "writer_packet": refreshed.get("writer_packet", {}),
         }
-        state_updated = str(old_snapshot) != str(new_snapshot)
+        new_hash = hashlib.sha256(
+            json.dumps(new_snapshot, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        state_updated = old_hash != new_hash
         if state_updated:
             logger.info("State updated after chat sync for %s", node_id)
     except Exception as e:
