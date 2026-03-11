@@ -324,65 +324,39 @@ async def api_chat(request: Request, run_id: str):
     history = get_chat_history(run_id, node_id)
     save_chat_message(run_id, node_id, "user", user_msg)
 
-    # ── 自动工具调用：检测消息中的 URL 和搜索意图 ──
+    # ── skill-driven 提示：检测 URL / 搜索意图，但不在 Python 里预抓取内容 ──
     import re as _re
-    from tools import is_wechat_url, fetch_wechat_article, search_web, search_social, fetch_url
+    skill_hints = []
 
-    enriched_parts = []
+    urls = []
+    for url in _re.findall(r'https?://\S+', user_msg):
+        cleaned = url.rstrip(",.;，。；）)]】」』")
+        if cleaned and cleaned not in urls:
+            urls.append(cleaned)
+    if urls:
+        skill_hints.append(
+            "[技能提示] 用户消息中包含参考链接。请优先使用可见的 contentpipe-wechat-reader / contentpipe-url-reader / contentpipe-style-reference 自行读取和提炼，不要假装系统已经替你抓好了正文。\n"
+            + json.dumps(urls[:5], ensure_ascii=False, indent=2)
+        )
 
-    # 1) 微信链接自动提取
-    wechat_urls = _re.findall(r'https?://mp\.weixin\.qq\.com/s/\S+', user_msg)
-    for url in wechat_urls:
-        url = url.rstrip(",.;，。；")
-        if is_wechat_url(url):
-            try:
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(None, lambda u=url: fetch_wechat_article(u))
-                if result.get("success"):
-                    enriched_parts.append(f"[已读取微信文章: {result.get('title','')}]\n{result.get('content','')[:3000]}")
-            except Exception:
-                pass
-
-    # 2) 其他 URL 自动抓取
-    other_urls = _re.findall(r'https?://(?!mp\.weixin\.qq\.com)\S+', user_msg)
-    for url in other_urls[:3]:  # 最多 3 个
-        url = url.rstrip(",.;，。；")
-        try:
-            loop = asyncio.get_event_loop()
-            text = await loop.run_in_executor(None, lambda u=url: fetch_url(u, max_chars=3000))
-            if text:
-                enriched_parts.append(f"[已读取网页: {url[:60]}]\n{text[:2000]}")
-        except Exception:
-            pass
-
-    # 3) 搜索意图检测 — 用户说"搜一下/查一查/帮我搜"
     search_triggers = _re.search(r'(?:搜一下|查一查|帮我搜|search for|look up|搜索)\s*[：:]?\s*(.+)', user_msg, _re.I)
     if search_triggers:
-        query = search_triggers.group(1).strip()[:60]
-        try:
-            loop = asyncio.get_event_loop()
-            web_res = await loop.run_in_executor(None, lambda q=query: search_web(q, count=5))
-            social_res = await loop.run_in_executor(None, lambda q=query: search_social(q, platforms=["twitter", "xiaohongshu"]))
-            if web_res:
-                enriched_parts.append(f"[网络搜索: {query}]\n" + "\n".join(
-                    f"- {r['title']}: {r.get('description','')[:80]}" for r in web_res[:5]
-                ))
-            for plat, items in social_res.items():
-                if items:
-                    enriched_parts.append(f"[{plat} 搜索: {query}]\n" + "\n".join(
-                        f"- {r.get('title','')[:60]} ({r.get('author','')})" for r in items[:5]
-                    ))
-        except Exception:
-            pass
+        query = search_triggers.group(1).strip()[:100]
+        skill_hints.append(
+            "[技能提示] 用户明确提出了搜索需求。请优先使用可见的 contentpipe-web-research / contentpipe-social-research 自主完成检索。\n"
+            f"建议查询: {query}"
+        )
 
-    if enriched_parts:
-        user_msg = user_msg + "\n\n" + "\n\n".join(enriched_parts)
-
-    # 工具结果写入 session（internal=True，前端不可见，但 LLM 能看到）
-    if enriched_parts:
-        save_chat_message(run_id, node_id, "user",
-                          "[自动工具结果]\n" + "\n\n".join(enriched_parts),
-                          tag="auto_tool", internal=True)
+    if skill_hints:
+        save_chat_message(
+            run_id,
+            node_id,
+            "user",
+            "[skill-driven hints]\n" + "\n\n".join(skill_hints),
+            tag="skill_hint",
+            internal=True,
+        )
+        user_msg = user_msg + "\n\n" + "\n\n".join(skill_hints)
 
     # 构建节点专属 system prompt
     system_prompt = _build_node_chat_prompt(node_id, raw)
@@ -547,17 +521,21 @@ def _build_node_chat_prompt(node_id: str, state: dict) -> str:
     def _fmt_ctx(ctx: dict) -> str:
         if not ctx:
             return ""
-        lines = ["\n执行时获取的数据源:"]
-        if ctx.get("hotnews_summary"):
-            lines.append(f"- 热搜: {', '.join(f'{k}({v}条)' for k, v in ctx['hotnews_summary'].items() if v)}")
-        if ctx.get("web_results_count"):
-            lines.append(f"- 网络搜索: {ctx['web_results_count']} 条结果")
-        if ctx.get("social_results"):
-            lines.append(f"- 社交平台: {', '.join(f'{k}({v}条)' for k, v in ctx['social_results'].items() if v)}")
-        if ctx.get("wechat_refs"):
-            lines.append(f"- 微信文章: {', '.join(r['title'] for r in ctx['wechat_refs'])}")
-        if ctx.get("perplexity_available"):
-            lines.append("- Perplexity 深度搜索: ✅")
+        lines = ["\n执行上下文摘要:"]
+        if ctx.get("mode"):
+            lines.append(f"- 模式: {ctx['mode']}")
+        if ctx.get("reference_urls"):
+            lines.append(f"- 参考链接: {len(ctx['reference_urls'])} 个")
+        if ctx.get("reference_url_count") is not None:
+            lines.append(f"- 参考链接: {ctx['reference_url_count']} 个")
+        if ctx.get("search_query"):
+            lines.append(f"- 主搜索主题: {ctx['search_query']}")
+        if ctx.get("social_query"):
+            lines.append(f"- 社交搜索主题: {ctx['social_query']}")
+        if ctx.get("verification_target_count") is not None:
+            lines.append(f"- 待核查断言: {ctx['verification_target_count']} 条")
+        if ctx.get("verification_count") is not None:
+            lines.append(f"- 已产出核查项: {ctx['verification_count']} 条")
         return "\n".join(lines)
 
     exec_ctx = _fmt_ctx(node_ctx)
@@ -582,8 +560,8 @@ Writer Brief:
 
 你的职责:
 - 帮用户分析这个选题的可行性和潜力
-- 如果用户给了文章链接，你能直接看到提取的正文内容
-- 如果用户说"搜一下 XXX"，系统会自动搜索并把结果附在消息里
+- 如果用户给了文章链接或网页链接，请优先使用可见的 contentpipe-* skills 自行读取
+- 如果用户说"搜一下 XXX"，请优先使用可见的 research skills 自主检索，不要假装系统已经把结果附上来
 - 用户可以让你换一个选题方向、修改角度、调整 Writer 要求
 - 讨论目标读者、传播性、差异化角度
 - **重要**：用户在对话中提出的任何修改，会在点击「继续」时自动同步到 YAML
@@ -598,6 +576,7 @@ Writer Brief:
 
 你的职责:
 - 帮用户判断数据是否充足、信源是否可靠
+- 如果用户给了链接或搜索指令，请优先使用可见的 contentpipe-* skills 自主阅读和检索
 - 讨论哪些论点需要更强的数据支撑
 - 建议补充哪些案例、数据、专家观点
 - 分析竞品文章的调研深度
@@ -617,6 +596,7 @@ Writer Brief:
 - 讨论开头是否能抓住读者
 - 指出仍然读起来像 AI 生成的部分
 - 建议更自然的表达方式
+- 如果用户贴了风格参考链接，请优先使用 contentpipe-style-reference 提炼风格再改写
 - 讨论语气、风格调整方向
 
 注意：用户看到的是润色后的最终文章，用户可以直接编辑文章内容。
