@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from typing import Any, Callable
 
 import yaml
@@ -282,6 +283,81 @@ def validate_image_candidates_json(text: str, expected_ids: list[str] | None = N
 
     normalized = json.dumps(parsed, ensure_ascii=False, indent=2) + "\n"
     return ValidationResult(ok=True, parsed=parsed, normalized_text=normalized)
+
+
+def validate_writer_markdown(text: str, min_chars: int = 1200) -> ValidationResult:
+    raw = _strip_code_fence(text).strip()
+    details: list[str] = []
+    bad_markers = [
+        "我看到你提供了",
+        "以下是",
+        "我将",
+        "我来为你",
+        "根据你的要求",
+        "下面是文章",
+        "已为你生成",
+        "这篇文章将",
+    ]
+
+    if len(raw) < min_chars:
+        details.append(f"content too short: {len(raw)} chars (< {min_chars})")
+
+    head = raw[:400]
+    for marker in bad_markers:
+        if marker in head:
+            details.append(f"meta marker near opening: {marker}")
+
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", raw) if p.strip()]
+    if len(paragraphs) < 4:
+        details.append(f"too few paragraphs: {len(paragraphs)}")
+
+    heading_count = sum(1 for line in raw.splitlines() if line.strip().startswith("## "))
+    if heading_count < 2:
+        details.append(f"too few section headings: {heading_count}")
+
+    if details:
+        return ValidationResult(ok=False, message="article_draft.md failed quality checks", details=details)
+    return ValidationResult(ok=True, parsed=raw, normalized_text=raw + "\n")
+
+
+def validate_de_ai_markdown(text: str, original_text: str) -> ValidationResult:
+    raw = _strip_code_fence(text).strip()
+    details: list[str] = []
+    bad_markers = [
+        "自检清单",
+        "改写完成",
+        "结构粉碎",
+        "风格拟态",
+        "我来根据",
+        "以下是",
+        "主要改动",
+        "处理如下",
+        "去AI味",
+        "润色后的版本",
+    ]
+
+    if len(raw) < 800:
+        details.append(f"content too short: {len(raw)} chars (< 800)")
+
+    for marker in bad_markers:
+        if marker in raw:
+            details.append(f"bad marker present: {marker}")
+
+    original = (original_text or "").strip()
+    if original:
+        ratio = len(raw) / max(len(original), 1)
+        if ratio < 0.6 or ratio > 1.4:
+            details.append(f"length ratio out of range: {ratio:.2f}x")
+
+        sim = SequenceMatcher(None, original[:5000], raw[:5000]).ratio()
+        if sim < 0.30:
+            details.append(f"too different from source article: similarity={sim:.2f}")
+        if sim > 0.985:
+            details.append(f"too similar to source article: similarity={sim:.2f}")
+
+    if details:
+        return ValidationResult(ok=False, message="article_edited.md failed quality checks", details=details)
+    return ValidationResult(ok=True, parsed=raw, normalized_text=raw + "\n")
 
 
 def build_validation_retry_message(filename: str, output_kind: str, result: ValidationResult) -> str:

@@ -27,10 +27,12 @@ from tools import call_llm, load_pipeline_config
 from validators import (
     ValidationResult,
     build_validation_retry_message,
+    validate_de_ai_markdown,
     validate_image_candidates_json,
     validate_research_yaml,
     validate_topic_yaml,
     validate_visual_plan_json,
+    validate_writer_markdown,
 )
 
 logger = get_logger(__name__)
@@ -602,7 +604,7 @@ def writer_node(state: ContentState) -> ContentState:
                 + json.dumps(style_reference_urls, ensure_ascii=False, indent=2)
             )
 
-    result, content = _call_llm_to_file_with_session(
+    result, content, _ = _call_llm_to_validated_file_with_session(
         state,
         "writer",
         prompt,
@@ -610,6 +612,7 @@ def writer_node(state: ContentState) -> ContentState:
         model=_get_model("writer"),
         output_filename="article_draft.md",
         output_kind="Markdown article正文",
+        validator=validate_writer_markdown,
         max_tokens=8192,
     )
 
@@ -640,7 +643,7 @@ def writer_node(state: ContentState) -> ContentState:
 
     # 去 AI 味用 Sonnet 4.6（文笔+对抗检测），独立 session 不混入 writer 对话
     de_ai_model = _get_model("de_ai_editor") or "anthropic/claude-sonnet-4-6"
-    de_ai_reply, de_ai_file = _call_llm_to_file_with_session(
+    de_ai_reply, de_ai_file, _ = _call_llm_to_validated_file_with_session(
         state,
         "de_ai_editor",
         de_ai_prompt,
@@ -648,14 +651,11 @@ def writer_node(state: ContentState) -> ContentState:
         model=de_ai_model,
         output_filename="article_edited.md",
         output_kind="Markdown article正文（去AI味后）",
+        validator=lambda text: validate_de_ai_markdown(text, content),
         max_tokens=8192,
     )
 
     de_ai_result = (de_ai_file or de_ai_reply).strip()
-    bad_markers = ["自检清单", "改写完成", "结构粉碎", "风格拟态", "我来根据", "以下是"]
-    if len(de_ai_result) < 200 or any(m in de_ai_result for m in bad_markers):
-        logger.warning("de_ai output invalid, fallback to original article")
-        de_ai_result = content
 
     state["article_edited"] = de_ai_result
     _save_artifact(state["run_id"], "article_edited.md", de_ai_result)
@@ -688,7 +688,7 @@ def de_ai_editor_node(state: ContentState) -> ContentState:
         )
     context = "\n".join(context_parts)
 
-    reply, file_content = _call_llm_to_file_with_session(
+    reply, file_content, _ = _call_llm_to_validated_file_with_session(
         state,
         "de_ai_editor",
         prompt,
@@ -696,13 +696,11 @@ def de_ai_editor_node(state: ContentState) -> ContentState:
         model=_get_model("de_ai_editor"),
         output_filename="article_edited.md",
         output_kind="Markdown article正文（去AI味后）",
+        validator=lambda text: validate_de_ai_markdown(text, article.get("content", "")),
         max_tokens=8192,
     )
 
     result = (file_content or reply).strip()
-    bad_markers = ["自检清单", "改写完成", "结构粉碎", "风格拟态", "我来根据", "以下是"]
-    if len(result) < 200 or any(m in result for m in bad_markers):
-        result = article.get("content", "")
 
     state["article_edited"] = result
     state["current_stage"] = "de_ai_editor"
