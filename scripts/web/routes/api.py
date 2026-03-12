@@ -16,7 +16,6 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
-from gateway_auth import build_contentpipe_session_key
 from logutil import get_logger
 
 from web.run_manager import (
@@ -26,6 +25,288 @@ from web.run_manager import (
     PIPELINE_NODES, _load_raw_state, _save_state,
 )
 from web.events import event_bus, emit_node_start, emit_node_complete, emit_run_complete
+
+
+def _node_session_key(state: dict, run_id: str, node_id: str, lane: str = "main") -> str:
+    """Delegates to nodes._node_session_key (single source of truth)."""
+    from nodes import _node_session_key as _nsk
+    if "run_id" not in state:
+        state["run_id"] = run_id
+    return _nsk(state, node_id, lane)
+
+
+def _read_prompt_text(name: str) -> str:
+    prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
+    path = prompts_dir / name
+    if not path.exists():
+        raise FileNotFoundError(f"Prompt file not found: {path}")
+    return path.read_text(encoding="utf-8")
+
+
+def _extract_tag_block(text: str, tag: str) -> str:
+    import re as _re
+    m = _re.search(rf"<{tag}>(.*?)</{tag}>", text or "", _re.S | _re.I)
+    return (m.group(1).strip() if m else "")
+
+
+def _node_official_artifact_path(run_id: str, node_id: str) -> Path | None:
+    run_dir = Path(__file__).parent.parent.parent.parent / "output" / "runs" / run_id
+    mapping = {
+        "scout": run_dir / "topic.yaml",
+        "researcher": run_dir / "research.yaml",
+        "director": run_dir / "visual_plan.json",
+        "formatter": run_dir / "formatted.html",
+    }
+    return mapping.get(node_id)
+
+
+def _apply_artifact_to_state_minimally(state: dict, node_id: str, artifact_text: str) -> None:
+    import yaml as _yaml
+
+    if node_id == "scout":
+        parsed = _yaml.safe_load(artifact_text) or {}
+        if not isinstance(parsed, dict):
+            raise ValueError("topic.yaml top-level must be a mapping")
+        state["topic"] = parsed.get("topic", {}) or {}
+        state["writer_brief"] = parsed.get("writer_brief", {}) or {}
+        state["handoff_to_researcher"] = parsed.get("handoff_to_researcher", {}) or {}
+        state["reference_articles"] = parsed.get("reference_articles", []) or []
+        state["user_requirements"] = parsed.get("user_requirements", {}) or {}
+        state["reference_index"] = parsed.get("reference_index", {}) or {}
+        state["link_usage_policy"] = parsed.get("link_usage_policy", {}) or {}
+        state["scout_process_summary"] = parsed.get("scout_process_summary", {}) or {}
+        state["current_stage"] = "scout"
+        return
+
+    if node_id == "researcher":
+        parsed = _yaml.safe_load(artifact_text) or {}
+        if not isinstance(parsed, dict):
+            raise ValueError("research.yaml top-level must be a mapping")
+        state["research"] = parsed
+        state["writer_packet"] = parsed.get("writer_packet", {}) or {}
+        state["verification_results"] = parsed.get("verification_results", []) or []
+        state["topic_support_materials"] = parsed.get("topic_support_materials", {}) or {}
+        state["evidence_backed_insights"] = parsed.get("evidence_backed_insights", []) or []
+        state["open_issues"] = parsed.get("open_issues", []) or []
+        state["current_stage"] = "researcher"
+        return
+
+    if node_id == "director":
+        parsed = json.loads(artifact_text or "{}")
+        if not isinstance(parsed, dict):
+            raise ValueError("visual_plan.json top-level must be an object")
+        state["visual_plan"] = parsed
+        state["current_stage"] = "director"
+        return
+
+    if node_id == "formatter":
+        state["formatted_html"] = artifact_text
+        state["current_stage"] = "formatter"
+        return
+
+
+async def _handle_artifact_review_chat(run_id: str, state: dict, node_id: str, user_msg: str, gateway_agent_id: str | None) -> tuple[str, bool]:
+    from tools import call_llm
+    from web.run_manager import get_chat_history, save_chat_message, _save_state
+    from nodes import _get_model
+
+    artifact_path = _node_official_artifact_path(run_id, node_id)
+    if not artifact_path:
+        raise ValueError(f"node {node_id} has no official artifact path")
+
+    before_text = artifact_path.read_text(encoding="utf-8") if artifact_path.exists() else ""
+    system_prompt = _build_node_chat_prompt(node_id, state) + f"""
+
+## 正式产物约束
+- 你的正式产物路径是：{artifact_path.as_posix()}
+- 当用户明确要求修改当前节点结果时，你可以直接使用 edit 或 write 修改这个正式产物
+- 不要修改其他节点的文件
+- 不要口头谎报“已更新”；Python 会在你回复后读回文件并决定本轮是否提交成功
+"""
+
+    current_artifact_block = before_text[:12000] if before_text else "(当前正式产物为空)"
+    user_input = f"""## 当前正式产物
+{current_artifact_block}
+
+## 用户本轮消息
+{user_msg}
+
+如果用户这轮要求修改当前节点的正式产物，请直接修改该文件；如果只是讨论，可只回复。"""
+
+    full_history = get_chat_history(run_id, node_id)
+    recent = [{"role": m["role"], "content": m["content"]} for m in full_history[-20:]]
+    chat_model = _get_model(node_id) or "dashscope/qwen3.5-plus"
+
+    loop = asyncio.get_event_loop()
+    ai_reply = await loop.run_in_executor(
+        None,
+        lambda: call_llm(
+            system_prompt,
+            user_input,
+            model=chat_model,
+            chat_history=recent,
+            gateway_session_key=_node_session_key(state, run_id, node_id, "main"),
+            gateway_agent_id=gateway_agent_id,
+        )
+    )
+
+    after_text = artifact_path.read_text(encoding="utf-8") if artifact_path.exists() else ""
+    state_updated = after_text != before_text and bool(after_text.strip())
+    if not state_updated:
+        save_chat_message(run_id, node_id, "assistant", ai_reply, tag="user_chat")
+        return ai_reply, False
+
+    try:
+        # Save .prev for diff support
+        if before_text:
+            from nodes import _save_artifact
+            _save_artifact(run_id, f"{artifact_path.name}.prev", before_text)
+        _apply_artifact_to_state_minimally(state, node_id, after_text)
+        _save_state(state)
+        logger.info("Artifact review commit accepted for %s", node_id)
+        save_chat_message(run_id, node_id, "assistant", ai_reply, tag="user_chat")
+        return ai_reply, True
+    except Exception as e:
+        try:
+            artifact_path.write_text(before_text, encoding="utf-8")
+        except Exception:
+            pass
+        logger.warning("Artifact review commit rejected for %s: %s", node_id, e)
+        repaired_reply = (ai_reply + f"\n\n（本轮文件修改未被系统接受：{str(e)[:120]}）").strip()
+        save_chat_message(run_id, node_id, "assistant", repaired_reply, tag="user_chat")
+        return repaired_reply, False
+
+
+async def _run_writer_structure_helper(run_id: str, state: dict, raw_output: str, current_article: str, gateway_agent_id: str | None) -> dict:
+    from tools import call_llm
+    import uuid
+
+    prompt = _read_prompt_text("writer-structure.md")
+    article_path = Path(__file__).parent.parent.parent.parent / "output" / "runs" / run_id / "article_edited.md"
+    context = f"""## 当前正式正文
+{current_article}
+
+## Writer 主 session 原始输出
+{raw_output}
+
+## 正式正文文件路径
+{article_path.as_posix()}
+"""
+
+    try:
+        loop = asyncio.get_event_loop()
+        helper_text = await loop.run_in_executor(
+            None,
+            lambda: call_llm(
+                prompt,
+                context,
+                model="dashscope/qwen3.5-flash",
+                response_format="json",
+                max_tokens=1200,
+                gateway_session_key=_node_session_key(state, run_id, "writer", f"structure-{uuid.uuid4().hex[:8]}"),
+                gateway_agent_id=gateway_agent_id,
+            )
+        )
+        return json.loads(helper_text)
+    except Exception:
+        return {
+            "reply_visible": _extract_tag_block(raw_output, "reply") or raw_output[:240].strip(),
+            "should_update_article": bool(_extract_tag_block(raw_output, "article_full")),
+            "change_summary": _extract_tag_block(raw_output, "change_summary"),
+        }
+
+
+async def _handle_writer_review_chat(run_id: str, state: dict, user_msg: str, gateway_agent_id: str | None) -> tuple[str, bool, str]:
+    from tools import call_llm
+    from web.run_manager import get_chat_history, save_chat_message, _save_state
+    from nodes import _get_model, _save_artifact
+
+    article_path = Path(__file__).parent.parent.parent.parent / "output" / "runs" / run_id / "article_edited.md"
+    if article_path.exists():
+        current_article = article_path.read_text(encoding="utf-8").strip()
+    else:
+        current_article = (state.get("article_edited", "") or state.get("article", {}).get("content", "")).strip()
+    article_title = state.get("article", {}).get("title", "") or state.get("topic", {}).get("title", "")
+
+    system_prompt = _read_prompt_text("writer-review.md") + f"""
+
+## 当前状态摘要
+- 文章标题: {article_title}
+- 当前正式正文长度: {len(current_article)} 字
+- 当前正文开头: {current_article[:200]}
+"""
+
+    writer_input = f"""## 当前正式正文
+{current_article}
+
+## 用户本轮消息
+{user_msg}
+
+请按约定输出 `<reply>`，并在需要修改正文时额外输出 `<change_summary>` 与 `<article_full>`。
+"""
+
+    full_history = [m for m in get_chat_history(run_id, "writer") if m.get("tag") != "writer_main_raw"]
+    recent = [{"role": m["role"], "content": m["content"]} for m in full_history[-20:]]
+    writer_model = _get_model("writer") or "openai-codex/gpt-5.4"
+
+    loop = asyncio.get_event_loop()
+    raw_output = await loop.run_in_executor(
+        None,
+        lambda: call_llm(
+            system_prompt,
+            writer_input,
+            model=writer_model,
+            chat_history=recent,
+            max_tokens=8192,
+            gateway_session_key=_node_session_key(state, run_id, "writer", "main"),
+            gateway_agent_id=gateway_agent_id,
+        )
+    )
+
+    save_chat_message(run_id, "writer", "assistant", raw_output, tag="writer_main_raw", internal=True)
+
+    helper = await _run_writer_structure_helper(run_id, state, raw_output, current_article, gateway_agent_id)
+    reply_visible = (helper.get("reply_visible") or _extract_tag_block(raw_output, "reply") or "我按你的要求处理了，左侧正文会同步更新。").strip()
+    change_summary = (helper.get("change_summary") or _extract_tag_block(raw_output, "change_summary") or "").strip()
+    should_update = bool(helper.get("should_update_article"))
+
+    after_article = article_path.read_text(encoding="utf-8").strip() if article_path.exists() else ""
+    state_updated = bool(after_article) and after_article != current_article
+
+    if state_updated:
+        if current_article:
+            _save_artifact(run_id, "article_edited.md.prev", current_article)
+        state["article_edited"] = after_article
+        if "article" in state and isinstance(state["article"], dict):
+            state["article"]["word_count"] = len(after_article)
+        _save_state(state)
+    elif should_update:
+        reply_visible = (reply_visible + "\n\n（本轮正文没有成功提交到正式产物文件，系统未接受这次修改。）").strip()
+
+    _save_artifact(
+        run_id,
+        "writer_last_exchange.json",
+        json.dumps(
+            {
+                "raw_output": raw_output,
+                "reply_visible": reply_visible,
+                "change_summary": change_summary,
+                "should_update_article": should_update,
+                "state_updated": state_updated,
+                "_debug": {
+                    "current_article_len": len(current_article),
+                    "after_article_len": len(after_article),
+                    "writer_model": writer_model,
+                    "helper_mode": "fresh-structure-session",
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+    )
+
+    return reply_visible, state_updated, change_summary
+
 
 router = APIRouter()
 
@@ -189,6 +470,11 @@ async def api_save_article(run_id: str, body: dict):
     if not state:
         raise HTTPException(status_code=404, detail="Run not found")
 
+    # Save previous version for diff
+    current_article = state.get("article_edited", "")
+    if current_article and current_article != content:
+        _save_artifact(run_id, "article_edited.md.prev", current_article)
+
     # 更新 article_edited（下游节点读这个）
     state["article_edited"] = content
     # 同步更新 article 的 word_count
@@ -197,6 +483,42 @@ async def api_save_article(run_id: str, body: dict):
     _save_state(state)
     _save_artifact(run_id, "article_edited.md", content)
     return {"ok": True, "word_count": len(content)}
+
+
+@router.get("/runs/{run_id}/diff")
+async def api_get_diff(run_id: str):
+    """获取文章改动 diff（当前 vs 上一版本）"""
+    import difflib
+
+    run_dir = Path(__file__).parent.parent.parent.parent / "output" / "runs" / run_id
+    current_path = run_dir / "article_edited.md"
+    prev_path = run_dir / "article_edited.md.prev"
+    draft_path = run_dir / "article_draft.md"
+
+    if not current_path.exists():
+        return JSONResponse({"error": "当前文章不存在"}, status_code=404)
+
+    # 优先用 .prev（上一次审核改稿前的版本），fallback 用 article_draft.md（初稿）
+    if prev_path.exists():
+        base_path = prev_path
+        from_label = "上一版本"
+    elif draft_path.exists():
+        base_path = draft_path
+        from_label = "初稿"
+    else:
+        return JSONResponse({"diff": None, "message": "暂无历史版本"})
+
+    current = current_path.read_text(encoding="utf-8").splitlines(keepends=True)
+    previous = base_path.read_text(encoding="utf-8").splitlines(keepends=True)
+
+    diff = difflib.unified_diff(
+        previous, current,
+        fromfile=from_label,
+        tofile="当前版本",
+        lineterm=""
+    )
+    diff_text = "\n".join(diff)
+    return {"diff": diff_text}
 
 
 # ── 节点数据 ──────────────────────────────────────────────────
@@ -255,14 +577,6 @@ async def api_submit_review(request: Request, run_id: str, background_tasks: Bac
     if action == "approve":
         raw["review_action"] = "approve"
         raw["user_feedback"] = {}
-
-        # ── 审核对话同步：将聊天讨论的结论写回 state ──
-        current_node = raw.get("current_stage", "")
-        if current_node:
-            try:
-                await _sync_chat_to_state(run_id, current_node, raw)
-            except Exception as e:
-                logger.warning("Chat sync failed for %s: %s", current_node, e)
     elif action == "revise":
         feedback = form.get("feedback", "")
         raw["review_action"] = "revise"
@@ -282,10 +596,17 @@ async def api_submit_review(request: Request, run_id: str, background_tasks: Bac
     # 恢复 Pipeline 执行
     background_tasks.add_task(_execute_pipeline, run_id)
 
-    # 重定向到 Run 详情页
+    # 重定向到 Run 详情页（HTMX 兼容）
+    wants_html = not request.headers.get("content-type", "").startswith("application/json")
+    if request.headers.get("HX-Request"):
+        # HTMX 请求：返回带 HX-Redirect 的响应
+        return HTMLResponse(
+            "",
+            headers={"HX-Redirect": f"/runs/{run_id}"},
+        )
+    # 普通表单提交：meta refresh
     return HTMLResponse(
         f'<meta http-equiv="refresh" content="0;url=/runs/{run_id}">',
-        headers={"HX-Redirect": f"/runs/{run_id}"},
     )
 
 
@@ -377,6 +698,49 @@ async def api_chat(request: Request, run_id: str):
         base_msg = user_msg or "(附图片)"
         user_msg = base_msg + "\n\n" + "\n\n".join(skill_hints)
 
+    gateway_agent_id = load_pipeline_config().get("pipeline", {}).get("gateway_agent_id")
+
+    # Writer: 连续主 session + fresh 结构 helper
+    if node_id == "writer":
+        try:
+            ai_reply, state_updated, change_summary = await _handle_writer_review_chat(
+                run_id,
+                raw,
+                user_msg,
+                gateway_agent_id,
+            )
+        except Exception as e:
+            ai_reply = f"[AI 回复失败: {str(e)[:100]}]"
+            state_updated = False
+            change_summary = ""
+
+        save_chat_message(run_id, node_id, "assistant", ai_reply, tag="user_chat")
+        return {
+            "role": "assistant",
+            "content": ai_reply,
+            "state_updated": state_updated,
+            "change_summary": change_summary,
+        }
+
+    # 结构化/预览节点：同 session 直接改正式产物，Python 读回后提交
+    if node_id in {"scout", "researcher", "director", "formatter"}:
+        try:
+            ai_reply, state_updated = await _handle_artifact_review_chat(
+                run_id,
+                raw,
+                node_id,
+                user_msg,
+                gateway_agent_id,
+            )
+        except Exception as e:
+            ai_reply = f"[AI 回复失败: {str(e)[:100]}]"
+            state_updated = False
+        return {
+            "role": "assistant",
+            "content": ai_reply,
+            "state_updated": state_updated,
+        }
+
     # 构建节点专属 system prompt
     system_prompt = _build_node_chat_prompt(node_id, raw)
 
@@ -387,7 +751,6 @@ async def api_chat(request: Request, run_id: str):
     # 审核聊天用该节点配置的同一个 model（保持写作风格一致）
     from nodes import _get_model
     chat_model = _get_model(node_id) or "dashscope/qwen3.5-plus"
-    gateway_agent_id = load_pipeline_config().get("pipeline", {}).get("gateway_agent_id")
 
     try:
         loop = asyncio.get_event_loop()
@@ -398,8 +761,7 @@ async def api_chat(request: Request, run_id: str):
                 user_msg,
                 model=chat_model,
                 chat_history=recent,
-                system_prompt=system_prompt,
-                gateway_session_key=build_contentpipe_session_key(run_id, node_id, "main"),
+                gateway_session_key=_node_session_key(raw, run_id, node_id, "main"),
                 gateway_agent_id=gateway_agent_id,
             )
         )
@@ -409,52 +771,11 @@ async def api_chat(request: Request, run_id: str):
     # AI 回复：前端可见（internal=False）
     save_chat_message(run_id, node_id, "assistant", ai_reply, tag="user_chat")
 
-    # ── 每次 AI 回复后：检查是否需要同步 ──
-    state_updated = False
-    try:
-        import copy
-        import hashlib
-        old_snapshot = {
-            "topic": copy.deepcopy(raw.get("topic", {})),
-            "visual_plan": copy.deepcopy(raw.get("visual_plan", {})),
-            "article_edited": raw.get("article_edited", ""),
-            "writer_brief": copy.deepcopy(raw.get("writer_brief", {})),
-            "writer_packet": copy.deepcopy(raw.get("writer_packet", {})),
-        }
-        old_hash = hashlib.sha256(
-            json.dumps(old_snapshot, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
-        ).hexdigest()
-        await _sync_chat_to_state(run_id, node_id, raw)
-        # 重新读取 state（_sync 可能写了磁盘）
-        refreshed = _load_raw_state(run_id) or raw
-        new_snapshot = {
-            "topic": refreshed.get("topic", {}),
-            "visual_plan": refreshed.get("visual_plan", {}),
-            "article_edited": refreshed.get("article_edited", ""),
-            "writer_brief": refreshed.get("writer_brief", {}),
-            "writer_packet": refreshed.get("writer_packet", {}),
-        }
-        new_hash = hashlib.sha256(
-            json.dumps(new_snapshot, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
-        ).hexdigest()
-        state_updated = old_hash != new_hash
-        if state_updated:
-            logger.info("State updated after chat sync for %s", node_id)
-    except Exception as e:
-        logger.warning("Post-reply sync failed: %s", e)
-
-    return {"role": "assistant", "content": ai_reply, "state_updated": state_updated}
+    return {"role": "assistant", "content": ai_reply, "state_updated": False}
 
 
-@router.post("/runs/{run_id}/nodes/{node_id}/rerun")
-async def api_rerun_node(request: Request, run_id: str, node_id: str, background_tasks: BackgroundTasks):
+def _rollback_to_review_node(raw: dict, run_id: str, node_id: str) -> tuple[dict, str]:
     """丢弃当前节点成果与 session，回退到上一个可审核节点继续聊天修改。"""
-    wants_html = not request.headers.get("content-type", "").startswith("application/json")
-
-    raw = _load_raw_state(run_id)
-    if not raw:
-        raise HTTPException(status_code=404, detail="Run not found")
-
     interactive_nodes = ["scout", "researcher", "writer", "director", "formatter"]
     if node_id not in interactive_nodes:
         raise HTTPException(status_code=400, detail=f"Node does not support rollback: {node_id}")
@@ -465,13 +786,17 @@ async def api_rerun_node(request: Request, run_id: str, node_id: str, background
 
     prev_node = interactive_nodes[idx - 1]
 
-    # 1) 丢弃当前节点 session
     run_dir = Path(__file__).parent.parent.parent / "output" / "runs" / run_id
     chat_file = run_dir / f"chat_{node_id}.json"
     if chat_file.exists():
         chat_file.unlink()
 
-    # 2) 丢弃当前节点的 state / 产物（只清当前节点，不动上一个节点）
+    session_gen = raw.get("_session_gen") if isinstance(raw.get("_session_gen"), dict) else {}
+    session_gen[node_id] = int(session_gen.get(node_id, 0) or 0) + 1
+    if node_id == "writer":
+        session_gen["de_ai_editor"] = int(session_gen.get("de_ai_editor", 0) or 0) + 1
+    raw["_session_gen"] = session_gen
+
     state_cleanup = {
         "scout": ["topic", "writer_brief", "handoff_to_researcher", "reference_articles", "user_requirements", "reference_index", "link_usage_policy", "scout_process_summary"],
         "researcher": ["research", "writer_packet", "verification_results", "evidence_backed_insights", "open_issues"],
@@ -490,8 +815,6 @@ async def api_rerun_node(request: Request, run_id: str, node_id: str, background
     for key in state_cleanup.get(node_id, []):
         raw.pop(key, None)
 
-    # formatter 回退到 director 时，保留 visual_plan，但清空 formatter 成果；
-    # director 回退到 writer 时，也清掉已经生成/选择的图片，避免后续误用旧图。
     if node_id == "director":
         raw.pop("generated_images", None)
         images_dir = run_dir / "images"
@@ -504,13 +827,24 @@ async def api_rerun_node(request: Request, run_id: str, node_id: str, background
         if path.exists():
             path.unlink()
 
-    # 3) 回退到上一个可审核节点，保留其已有状态与聊天，继续聊天修改
     raw["current_stage"] = prev_node
     raw["status"] = "review"
-    raw["_node_done"] = True  # 审批时跳过重新执行上一个节点，直接往后跑
+    raw["_node_done"] = True
     raw["review_action"] = ""
     raw.pop("user_feedback", None)
     _save_state(raw)
+    return raw, prev_node
+
+
+@router.post("/runs/{run_id}/nodes/{node_id}/rerun")
+async def api_rerun_node(request: Request, run_id: str, node_id: str, background_tasks: BackgroundTasks):
+    wants_html = not request.headers.get("content-type", "").startswith("application/json")
+
+    raw = _load_raw_state(run_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    _, prev_node = _rollback_to_review_node(raw, run_id, node_id)
 
     redirect_to = f"/runs/{run_id}/review?node={prev_node}"
     if wants_html:
@@ -524,6 +858,40 @@ async def api_rerun_node(request: Request, run_id: str, node_id: str, background
         "message": f"Discarded {node_id} and rolled back to {prev_node}",
         "redirect_to": redirect_to,
         "prev_node": prev_node,
+    }
+
+
+@router.post("/runs/{run_id}/rollback/image-gen-to-director")
+async def api_rollback_image_gen_to_director(run_id: str):
+    """从图片生成阶段回退到 AI 导演审核态。"""
+    raw = _load_raw_state(run_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    run_dir = Path(__file__).parent.parent.parent / "output" / "runs" / run_id
+    raw["current_stage"] = "director"
+    raw["status"] = "review"
+    raw["_node_done"] = True
+    raw["review_action"] = ""
+    raw.pop("user_feedback", None)
+    raw.pop("generated_images", None)
+    raw.pop("generated_cover", None)
+    raw.pop("selected_images", None)
+
+    for name in ["generated_images.json", "generated_cover.json"]:
+        path = run_dir / name
+        if path.exists():
+            path.unlink()
+    images_dir = run_dir / "images"
+    if images_dir.exists():
+        import shutil
+        shutil.rmtree(images_dir, ignore_errors=True)
+
+    _save_state(raw)
+    return {
+        "ok": True,
+        "message": "Rolled back from image_gen to director review",
+        "redirect_to": f"/runs/{run_id}/review?node=director",
     }
 
 
@@ -583,7 +951,9 @@ Writer Brief:
 - 如果用户说"搜一下 XXX"，请优先使用可见的 research skills 自主检索，不要假装系统已经把结果附上来
 - 用户可以让你换一个选题方向、修改角度、调整 Writer 要求
 - 讨论目标读者、传播性、差异化角度
-- **重要**：用户在对话中提出的任何修改，会在点击「继续」时自动同步到 YAML
+- 当用户明确要求修改当前节点结果时，你可以直接修改本节点的正式产物文件
+- 不要修改其他节点文件
+- 不要口头谎报“已更新”；是否提交成功以 Python 读回正式产物后的结果为准
 
 保持专业但不啰嗦，用中文回复。""",
 
@@ -599,27 +969,35 @@ Writer Brief:
 - 讨论哪些论点需要更强的数据支撑
 - 建议补充哪些案例、数据、专家观点
 - 分析竞品文章的调研深度
+- 当用户明确要求修改当前节点结果时，你可以直接修改本节点的正式产物文件
+- 不要修改其他节点文件，也不要谎报“已写入 YAML”
 
 保持严谨，用中文回复。""",
 
-        "writer": f"""你是**写作 AI**。你刚完成了文章写作和润色（包括去 AI 味处理）。
+        "writer": f"""你是“微信公众号主笔”子 agent。你刚完成了文章写作和终稿润色。
 
 标题: {article.get('title', '')}
 初稿字数: {article.get('word_count', 0)}
 润色后字数: {len(article_edited)}
 润色后开头: {(article_edited or article.get('content', ''))[:200]}
 
-你的职责:
-- 讨论文章整体质量、结构、节奏
-- 分析标题的吸引力
-- 讨论开头是否能抓住读者
-- 指出仍然读起来像 AI 生成的部分
-- 建议更自然的表达方式
-- 如果用户贴了风格参考链接，请优先使用 contentpipe-style-reference 提炼风格再改写
-- 讨论语气、风格调整方向
+你的目标是和用户一起把这篇文章打磨成“愿意被读完、被转发、被划线”的公众号文章。
 
-注意：用户看到的是润色后的最终文章，用户可以直接编辑文章内容。
-保持有文笔的专业，用中文回复。""",
+你的职责:
+- 讨论文章整体质量、结构、节奏和推进感
+- 判断标题是否有信息量和张力，但不过度标题党
+- 判断开头是否足够快地把读者拉进来
+- 找出仍然偏空、偏套话、偏 AI 味的段落
+- 给出更自然、更像成熟作者的表达建议
+- 讨论语气、风格、结构、收尾的调整方向
+- 如果用户贴了风格参考链接，请优先使用 contentpipe-style-reference 提炼风格，再做调整，不要模仿具体作者
+
+注意：
+- 用户看到的是润色后的最终文章，用户可以直接编辑文章内容。
+- 保持克制、清醒、有判断，不卖弄，不喊口号。
+- 不编造事实，不建议加入没有依据的数据或引用。
+
+用中文回复，风格自然，别写成审稿报告。""",
 
         "director": f"""你是**视觉导演 AI**。你刚完成了配图方案设计。
 
@@ -632,6 +1010,8 @@ Writer Brief:
 - 分析每张配图的位置和目的
 - 建议更好的视觉方向
 - 讨论图片风格的一致性
+- 当用户明确要求修改当前节点结果时，你可以直接修改本节点的正式产物文件
+- 不要修改其他节点文件，也不要谎报“已写入 JSON/YAML”
 
 保持有审美品味，用中文回复。""",
 
@@ -647,6 +1027,8 @@ Writer Brief:
 - 如果用户想换某张图，记录下来
 - 讨论标题/副标题的呈现
 - 确认微信公众号兼容性
+- 当用户明确要求修改当前排版结果时，你可以直接修改本节点的正式产物文件
+- 不要修改其他节点文件，也不要谎报“已写入 HTML”
 
 保持简洁，用中文回复。""",
     }
@@ -731,7 +1113,15 @@ async def api_upload_image(run_id: str, request: Request):
         raise HTTPException(status_code=400, detail="Invalid placement id")
 
     # 保存文件
-    filename = f"{placement_id}{suffix}"
+    if purpose == "cover":
+        filename = f"cover{suffix}"
+        # 清理旧封面文件（不同扩展名）
+        for ext in ALLOWED_IMAGE_EXTS:
+            old = images_dir / f"cover{ext}"
+            if old.exists():
+                old.unlink()
+    else:
+        filename = f"{placement_id}{suffix}"
     filepath = images_dir / filename
     content = await image.read()
     if len(content) > MAX_UPLOAD_BYTES:
@@ -751,6 +1141,16 @@ async def api_upload_image(run_id: str, request: Request):
         })
         state["generated_images"] = generated
         _save_state(state)
+    elif purpose == "cover":
+        state["generated_cover"] = {
+            "success": True,
+            "file_path": str(filepath),
+            "engine": "user_upload",
+            "prompt_used": "",
+            "generation_time_ms": 0,
+            "error": "",
+        }
+        _save_state(state)
 
     return {
         "ok": True,
@@ -760,6 +1160,40 @@ async def api_upload_image(run_id: str, request: Request):
         "purpose": purpose,
         "mime": content_type or f"image/{suffix.lstrip('.')}"
     }
+
+
+@router.post("/runs/{run_id}/placements/{pid}/caption")
+async def api_save_placement_caption(run_id: str, pid: str, body: dict):
+    """保存某个配图位置的 caption（读者可见图注）。"""
+    from web.run_manager import _load_raw_state, _save_state
+    from nodes import _save_artifact
+
+    if not SAFE_PID_RE.match(pid):
+        raise HTTPException(status_code=400, detail="Invalid placement id")
+
+    state = _load_raw_state(run_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    caption = str((body or {}).get("caption", "")).strip()
+    vp = state.get("visual_plan", {})
+    prev_vp_text = json.dumps(vp, ensure_ascii=False, indent=2)
+    placements = vp.get("placements", []) if isinstance(vp, dict) else []
+    found = False
+    for p in placements:
+        if p.get("id") == pid:
+            p["caption"] = caption
+            found = True
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail="Placement not found")
+
+    # 保存上一版供 diff 使用
+    _save_artifact(run_id, "visual_plan.json.prev", prev_vp_text)
+    state["visual_plan"] = vp
+    _save_state(state)
+    _save_artifact(run_id, "visual_plan.json", json.dumps(vp, ensure_ascii=False, indent=2))
+    return {"ok": True, "placement_id": pid, "caption": caption}
 
 
 @router.delete("/runs/{run_id}/placements/{pid}")
@@ -831,12 +1265,8 @@ async def api_update_settings_form(request: Request):
         if val:
             overrides[role] = val
 
-    # WeChat config
+    # WeChat config（凭证只走环境变量，不落配置文件）
     wechat = settings.setdefault("wechat", {})
-    if form.get("wechat_app_id"):
-        wechat["app_id"] = form["wechat_app_id"]
-    if form.get("wechat_app_secret"):
-        wechat["app_secret"] = form["wechat_app_secret"]
     if form.get("wechat_author"):
         wechat["author"] = form["wechat_author"]
 
@@ -848,211 +1278,8 @@ async def api_update_settings_form(request: Request):
 
 # ── 审核对话同步 ──────────────────────────────────────────────
 
-async def _sync_chat_to_state(run_id: str, node_id: str, state: dict):
-    """每次 AI 回复后，检查最新对话是否包含修改意图，有则同步回 state。
-
-    两步策略：
-    1. 快速判断（看最新一轮 user+assistant）——是否有修改意图？
-    2. 如果有，完整同步（把当前 YAML + 最近对话喂给 LLM 更新）
-    """
-    from web.run_manager import get_chat_history, _save_state
-    from nodes import _save_artifact
-    from tools import call_llm, load_pipeline_config
-    import yaml as _yaml
-
-    # 节点字段映射 — YAML 类节点
-    NODE_STATE_FIELDS = {
-        "scout": ["topic", "writer_brief", "handoff_to_researcher", "reference_articles", "user_requirements"],
-        "researcher": ["writer_packet", "verification_results", "evidence_backed_insights", "open_issues"],
-        "director": ["visual_plan"],
-    }
-    # 文章类节点 — 同步的是长文本，不是 YAML
-    ARTICLE_NODES = {"writer"}
-
-    is_yaml_node = node_id in NODE_STATE_FIELDS
-    is_article_node = node_id in ARTICLE_NODES
-    if not is_yaml_node and not is_article_node:
-        return
-
-    history = get_chat_history(run_id, node_id)
-    visible = [m for m in history if not m.get("internal")]
-    if len(visible) < 2:
-        return
-
-    gateway_agent_id = load_pipeline_config().get("pipeline", {}).get("gateway_agent_id")
-
-    # 取最新一轮对话
-    last_user = ""
-    last_ai = ""
-    for m in reversed(visible):
-        if m["role"] == "assistant" and not last_ai:
-            last_ai = m["content"][:300]
-        elif m["role"] == "user" and not last_user:
-            last_user = m["content"][:300]
-        if last_user and last_ai:
-            break
-
-    if not last_user:
-        return
-
-    # ── Step 1: 快速判断是否有修改意图 ──
-    loop = asyncio.get_event_loop()
-
-    if is_article_node:
-        judge_q = (
-            f"问题: 这轮对话中，用户是否明确要求修改文章内容、结构、标题、"
-            f"段落、措辞、开头、结尾等？（纯讨论/提问/夸奖 = NO）"
-        )
-    else:
-        judge_q = (
-            f"问题: 这轮对话中，用户是否明确要求修改选题方向、角度、标题、要求、"
-            f"核查目标、写作指导、配图方案等内容？（纯闲聊/提问/确认 = NO）"
-        )
-
-    judge_result = await loop.run_in_executor(
-        None,
-        lambda: call_llm(
-            "你是意图分类器。只输出 YES 或 NO，不要输出任何其他内容。",
-            f"用户消息: {last_user}\nAI回复: {last_ai}\n\n{judge_q}\n只输出 YES 或 NO：",
-            model="dashscope/qwen3.5-flash",
-            max_tokens=10,
-            gateway_session_key=build_contentpipe_session_key(run_id, node_id, "judge"),
-            gateway_agent_id=gateway_agent_id,
-        )
-    )
-
-    if "YES" not in judge_result.upper():
-        return
-
-    logger.info("Chat sync triggered for %s (modification detected)", node_id)
-
-    recent_chat = "\n".join(
-        f"{'用户' if m['role'] == 'user' else 'AI'}: {m['content'][:200]}"
-        for m in visible[-6:]
-    )
-    recent_urls: list[str] = []
-    for m in visible[-6:]:
-        for url in re.findall(r'https?://\S+', m.get('content', '')):
-            cleaned = url.rstrip(",.;，。；）)]】」』")
-            if cleaned and cleaned not in recent_urls:
-                recent_urls.append(cleaned)
-
-    # ── Step 2a: 文章节点 — 同步文章内容 ──
-    if is_article_node:
-        article_edited = state.get("article_edited", "")
-        if not article_edited:
-            article_edited = state.get("article", {}).get("content", "")
-
-        # 文章改写用 Writer 同一个 model（保持风格一致）
-        from nodes import _get_model
-        writer_model = _get_model("writer") or "dashscope/qwen3.5-plus"
-        sync_context = f"""用户在审核对话中要求修改文章。请根据用户要求自行判断修改策略：
-- 如果只是局部要求，就做局部修改
-- 如果用户要求按某种风格重写、整体重构、明显改写，就可以整体重写
-
-只输出修改后的完整 Markdown 文章，不要输出任何解释文字。
-"""
-        if recent_urls:
-            sync_context += (
-                "\n5. 如果最近对话里贴了参考链接，优先使用 contentpipe-style-reference / contentpipe-url-reader / contentpipe-wechat-reader 提炼其风格或结构，再应用到文章，不要直接照抄原文。\n"
-                + "\n## 最近对话中的参考链接\n"
-                + json.dumps(recent_urls, ensure_ascii=False, indent=2)
-            )
-        sync_context += f"""
-
-## 当前文章
-{article_edited}
-
-## 最近对话（包含修改要求）
-{recent_chat}
-
-输出修改后的完整文章："""
-
-        sync_result = await loop.run_in_executor(
-            None,
-            lambda: call_llm(
-                "你是文章编辑助手。根据用户要求修改文章，只输出修改后的完整 Markdown 文章，不要输出任何解释。",
-                sync_context,
-                model=writer_model,
-                max_tokens=8192,
-                gateway_session_key=build_contentpipe_session_key(run_id, node_id, "article-sync"),
-                gateway_agent_id=gateway_agent_id,
-            )
-        )
-
-        try:
-            from nodes import _strip_code_fence
-            new_article = _strip_code_fence(sync_result).strip()
-            if len(new_article) > 200:  # 基本合理性检查
-                state["article_edited"] = new_article
-                _save_state(state)
-                _save_artifact(run_id, "article_edited.md", new_article)
-                logger.info("Article sync complete (%s chars)", len(new_article))
-        except Exception as e:
-            logger.warning("Article sync failed: %s", e)
-        return
-
-    # ── Step 2b: YAML 节点 — 同步结构化数据 ──
-    fields = NODE_STATE_FIELDS[node_id]
-    current_data = {}
-    for f in fields:
-        val = state.get(f)
-        if val:
-            current_data[f] = val
-
-    sync_result = await loop.run_in_executor(
-        None,
-        lambda: call_llm(
-            "你是数据同步助手，只输出 YAML，不要输出任何其他内容。",
-            f"""用户在「{node_id}」节点审核对话中提出了修改。请根据对话更新 YAML。
-
-## 规则
-1. 只修改对话中明确要求改的部分
-2. 没提到的字段保持原样不动
-3. 输出完整 YAML（不是 diff）
-4. 只输出 YAML
-
-## 当前数据
-```yaml
-{_yaml.dump(current_data, allow_unicode=True, default_flow_style=False)}
-```
-
-## 最近对话
-{recent_chat}
-
-输出更新后的完整 YAML：""",
-            model="dashscope/qwen3.5-flash",
-            gateway_session_key=build_contentpipe_session_key(run_id, node_id, "yaml-sync"),
-            gateway_agent_id=gateway_agent_id,
-        )
-    )
-
-    try:
-        from nodes import _strip_code_fence
-        updated = _yaml.safe_load(_strip_code_fence(sync_result))
-        if not isinstance(updated, dict):
-            return
-
-        changed = False
-        for f in fields:
-            if f in updated and updated[f] != state.get(f):
-                state[f] = updated[f]
-                changed = True
-                logger.info("Chat sync updated state[%s]", f)
-
-        if changed:
-            _save_state(state)
-            if node_id == "scout":
-                _save_artifact(run_id, "topic.yaml",
-                    _yaml.dump({f: state[f] for f in fields if f in state},
-                               allow_unicode=True, default_flow_style=False))
-            elif node_id == "researcher":
-                _save_artifact(run_id, "research.yaml",
-                    _yaml.dump({f: state[f] for f in fields if f in state},
-                               allow_unicode=True, default_flow_style=False))
-            logger.info("Chat sync complete for %s", node_id)
-    except Exception as e:
-        logger.warning("Chat sync parse failed: %s", e)
+# 旧的 _sync_chat_to_state 链路已退役：
+# 审核聊天现在直接由节点主 session 修改正式产物，再由 Python 读回并提交。
 
 
 # ── 内部函数 ──────────────────────────────────────────────────
@@ -1061,10 +1288,9 @@ async def _execute_pipeline(run_id: str):
     """
     后台执行 Pipeline — 调用真实 LLM 节点
 
-    节点顺序: scout → researcher → writer → de_ai_editor → director
-    → image_gen → formatter → publisher
+    节点顺序: scout → researcher → writer → director → image_gen → formatter → publisher
 
-    交互节点（人工模式暂停）: scout, researcher, writer, de_ai_editor, director, formatter
+    交互节点（人工模式暂停）: scout, researcher, writer, director, formatter
     自动节点: image_gen（每个配图位置生成 1 张）, publisher（发布）
     """
     import sys

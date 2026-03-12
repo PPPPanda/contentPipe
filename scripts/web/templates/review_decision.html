@@ -15,13 +15,26 @@
     .chat-msg { max-width: 85%; }
     .chat-user {
         margin-left: auto;
-        background: linear-gradient(180deg, rgba(255, 248, 250, 0.96) 0%, rgba(248, 231, 236, 0.92) 100%);
-        border: 1px solid rgba(236, 190, 201, 0.65);
-        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
-        color: #1f2937;
-        backdrop-filter: blur(2px);
+        background:
+            linear-gradient(180deg, rgba(96, 165, 250, 0.10) 0%, rgba(59, 130, 246, 0.04) 100%),
+            linear-gradient(180deg, rgba(51, 65, 85, 0.96) 0%, rgba(30, 41, 59, 0.96) 100%);
+        border: 1px solid rgba(96, 165, 250, 0.22);
+        box-shadow:
+            inset 0 1px 0 rgba(255, 255, 255, 0.05),
+            0 6px 18px rgba(15, 23, 42, 0.18);
+        color: #eaf2ff;
+        backdrop-filter: blur(6px) saturate(115%);
     }
-    .chat-ai { margin-right: auto; background: #334155; }
+    .chat-user strong,
+    .chat-user a {
+        color: #f8fbff;
+    }
+    .chat-ai {
+        margin-right: auto;
+        background: linear-gradient(180deg, rgba(71, 85, 105, 0.88) 0%, rgba(51, 65, 85, 0.88) 100%);
+        border: 1px solid rgba(148, 163, 184, 0.12);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+    }
     .typing-dot { animation: blink 1.4s infinite both; }
     .typing-dot:nth-child(2) { animation-delay: 0.2s; }
     .typing-dot:nth-child(3) { animation-delay: 0.4s; }
@@ -60,7 +73,19 @@
                         <span class="text-sky-400 text-sm font-medium">配图 {{ loop.index }}</span>
                         <span class="text-xs text-slate-500">{{ p.type or 'illustration' }} · {{ p.size_hint or 'full' }}</span>
                     </div>
-                    <p class="text-sm text-slate-300 mb-1">{{ p.description[:120] }}{% if p.description|length > 120 %}…{% endif %}</p>
+                    {% set desc = p.description or '' %}
+                    {% if desc|length > 140 %}
+                    <details class="text-sm text-slate-300 mb-1 group">
+                        <summary class="cursor-pointer list-none text-slate-300 hover:text-white">
+                            {{ desc[:140] }}…
+                            <span class="text-sky-400 ml-1 group-open:hidden">展开</span>
+                            <span class="text-sky-400 ml-1 hidden group-open:inline">收起</span>
+                        </summary>
+                        <p class="mt-2 whitespace-pre-wrap break-words">{{ desc }}</p>
+                    </details>
+                    {% else %}
+                    <p class="text-sm text-slate-300 mb-1 whitespace-pre-wrap break-words">{{ desc }}</p>
+                    {% endif %}
                     <p class="text-xs text-slate-500">🎯 {{ p.purpose or '' }}</p>
                 </div>
                 {% endfor %}
