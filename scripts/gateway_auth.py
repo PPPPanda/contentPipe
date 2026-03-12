@@ -48,3 +48,11 @@ def build_contentpipe_session_key(*parts: str) -> str:
         if p:
             cleaned.append(p)
     return "contentpipe:" + ":".join(cleaned)
+
+
+def build_contentpipe_node_session_key(run_id: str, node_id: str, lane: str = "main", generation: int = 0) -> str:
+    """构造节点级 session key；generation 用于回退/重跑后切断旧上下文。"""
+    parts = [run_id, node_id, lane]
+    if generation > 0:
+        parts.append(f"g{generation}")
+    return build_contentpipe_session_key(*parts)
