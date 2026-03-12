@@ -16,6 +16,7 @@ API: GET https://image.pollinations.ai/prompt/{prompt}?width=W&height=H&model=fl
 from __future__ import annotations
 
 import os
+import re
 import time
 from pathlib import Path
 from urllib.parse import quote
@@ -143,6 +144,33 @@ class PollinationsEngine(ImageEngine):
         return True
 
 
+def _clean_llm_prompt_text(text: str, max_len: int = 180) -> str:
+    """把 LLM 返回的 prompt 清洗成适合图片接口的纯文本。"""
+    if not text:
+        return ""
+
+    cleaned = text.strip().strip('"').strip("'")
+
+    # 去 code fence
+    cleaned = re.sub(r"^```[a-zA-Z0-9_-]*\\s*", "", cleaned)
+    cleaned = re.sub(r"\\s*```$", "", cleaned)
+
+    # 去常见说明性前缀 / 标题
+    cleaned = re.sub(r"^\*\*\s*Condensed\s+Prompt[^\n:：]*[:：]\*\*\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"^Condensed\s+Prompt[^\n:：]*[:：]\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"^\*\*\s*English\s+Prompt[^\n:：]*[:：]\*\*\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"^English\s+Prompt[^\n:：]*[:：]\s*", "", cleaned, flags=re.I)
+    cleaned = re.sub(r"^Prompt\s*[:：]\s*", "", cleaned, flags=re.I)
+
+    # 去 markdown 强调符 / 项目符号
+    cleaned = cleaned.replace("**", " ").replace("__", " ")
+    cleaned = re.sub(r"^[\-•*]+\s*", "", cleaned)
+
+    # 多行压一行
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned[:max_len]
+
+
 def _shorten_prompt(prompt: str, max_len: int = 180) -> str:
     """
     精简长 prompt。先尝试 LLM 摘要，失败则硬截断。
@@ -160,9 +188,9 @@ def _shorten_prompt(prompt: str, max_len: int = 180) -> str:
             max_tokens=150,
             gateway_session_key=build_contentpipe_session_key("helper", "image-prompt", "shorten"),
         )
-        short = result.strip().strip('"').strip("'")
+        short = _clean_llm_prompt_text(result, max_len=max_len)
         if short and len(short) > 10:
-            return short[:max_len]
+            return short
     except Exception:
         pass
     return prompt[:max_len]
@@ -191,7 +219,7 @@ def _translate_prompt(chinese_prompt: str) -> str:
             max_tokens=200,
             gateway_session_key=build_contentpipe_session_key("helper", "image-prompt", "translate"),
         )
-        translated = result.strip().strip('"').strip("'")
+        translated = _clean_llm_prompt_text(result, max_len=240)
         if translated and len(translated) > 10:
             return translated
     except Exception as e:

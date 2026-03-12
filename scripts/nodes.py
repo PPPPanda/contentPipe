@@ -20,7 +20,7 @@ from pathlib import Path
 import re
 import yaml
 
-from gateway_auth import build_contentpipe_session_key
+from gateway_auth import build_contentpipe_node_session_key
 from logutil import get_logger
 from state import ContentState
 from tools import call_llm, load_pipeline_config
@@ -36,6 +36,12 @@ from validators import (
 )
 
 logger = get_logger(__name__)
+
+
+def _node_session_key(state: ContentState, node_id: str, lane: str = "main") -> str:
+    session_gen = state.get("_session_gen", {}) if isinstance(state.get("_session_gen", {}), dict) else {}
+    generation = int(session_gen.get(node_id, 0) or 0)
+    return build_contentpipe_node_session_key(state["run_id"], node_id, lane, generation)
 
 
 def _strip_code_fence(text: str) -> str:
@@ -119,7 +125,7 @@ def _call_llm_with_session(
     recent = [{"role": m["role"], "content": m["content"]} for m in history[:-1]][-20:]
 
     cfg = load_pipeline_config().get("pipeline", {})
-    gateway_session_key = build_contentpipe_session_key(state["run_id"], node_id, "main")
+    gateway_session_key = _node_session_key(state, node_id, "main")
     result = call_llm(
         prompt,
         context,
@@ -181,7 +187,7 @@ def _call_llm_to_file_with_session(
         max_tokens=max_tokens,
         chat_history=recent,
         system_prompt=prompt,
-        gateway_session_key=build_contentpipe_session_key(state["run_id"], node_id, "main"),
+        gateway_session_key=_node_session_key(state, node_id, "main"),
         gateway_agent_id=gateway_agent_id,
     )
     _append_node_session(state, node_id, "assistant", agent_reply, tag=f"{node_id}_exec", internal=True)
@@ -816,6 +822,30 @@ def image_gen_node(state: ContentState) -> ContentState:
     img_dir = OUTPUT_DIR / "runs" / run_id / "images"
     img_dir.mkdir(parents=True, exist_ok=True)
 
+    existing_generated = {}
+    for img in state.get("generated_images", []) or []:
+        pid = img.get("placement_id", "")
+        fp = img.get("file_path", "")
+        if pid and img.get("success") and fp and os.path.exists(fp):
+            existing_generated[pid] = img
+
+    existing_cover = state.get("generated_cover", {}) if isinstance(state.get("generated_cover"), dict) else {}
+    has_existing_cover = bool(existing_cover.get("success") and existing_cover.get("file_path") and os.path.exists(existing_cover.get("file_path")))
+
+    placement_ids = [str(p.get("id", f"img_{i+1:03d}")) for i, p in enumerate(placements)]
+    all_placements_ready = bool(placement_ids) and all(pid in existing_generated for pid in placement_ids)
+    if has_existing_cover and all_placements_ready:
+        logger.info("image_gen: all assets already provided, skip generation")
+        generated = [existing_generated[pid] for pid in placement_ids]
+        state["generated_images"] = generated
+        state["generated_cover"] = existing_cover
+        state["selected_images"] = {g["placement_id"]: "A" for g in generated if g.get("success")}
+        state["current_stage"] = "image_gen"
+        _save_artifact(run_id, "generated_images.json", json.dumps(generated, ensure_ascii=False, indent=2))
+        _save_artifact(run_id, "generated_cover.json", json.dumps(existing_cover, ensure_ascii=False, indent=2))
+        _save_state(state)
+        return state
+
     engine = create_engine_from_config()
     logger.info("Image engine: %s", engine)
 
@@ -825,10 +855,31 @@ def image_gen_node(state: ContentState) -> ContentState:
         "1:1": (1024, 1024), "9:16": (576, 1024), "2.35:1": (1410, 600),
     }
 
-    # 先生成封面（P0.5: 专门 cover，不再复用正文首图）
+    # 先处理封面（优先复用用户已替换/已存在的 cover）
     cover = visual_plan.get("cover", {}) if isinstance(visual_plan, dict) else {}
-    generated_cover = {}
-    if isinstance(cover, dict) and cover.get("description"):
+    generated_cover = existing_cover if has_existing_cover else {}
+    if has_existing_cover:
+        logger.info("cover: reuse existing uploaded/generated cover")
+    elif isinstance(cover, dict) and cover.get("user_image_url"):
+        cover_path = img_dir / "cover.jpg"
+        try:
+            import httpx
+            resp = httpx.get(cover.get("user_image_url"), timeout=30, follow_redirects=True)
+            resp.raise_for_status()
+            cover_path.write_bytes(resp.content)
+            generated_cover = {
+                "file_path": str(cover_path),
+                "engine": "user_provided",
+                "prompt_used": "",
+                "generation_time_ms": 0,
+                "success": True,
+                "error": "",
+            }
+            logger.info("cover: user image saved")
+        except Exception as e:
+            generated_cover = {"success": False, "error": str(e)[:200], "file_path": "", "engine": "user_provided", "prompt_used": "", "generation_time_ms": 0}
+            logger.warning("cover: download failed (%s), falling back to generation", e)
+    if (not generated_cover or not generated_cover.get("success")) and isinstance(cover, dict) and cover.get("description"):
         cover_path = img_dir / "cover.jpg"
         cover_aspect = cover.get("aspect_ratio", "2.35:1")
         cover_width, cover_height = aspect_map.get(cover_aspect, (1410, 600))
@@ -867,6 +918,12 @@ def image_gen_node(state: ContentState) -> ContentState:
         aspect = placement.get("size_hint", placement.get("aspect_ratio", "16:9"))
         width, height = aspect_map.get(aspect, (1024, 576))
         file_path = img_dir / f"{pid}.jpg"
+
+        # 优先复用已上传/已存在图片
+        if pid in existing_generated:
+            generated.append(existing_generated[pid])
+            logger.info("%s: reuse existing uploaded/generated image", pid)
+            continue
 
         # 用户提供了图片 URL → 直接下载
         user_url = placement.get("user_image_url", "")
@@ -930,16 +987,13 @@ def image_gen_node(state: ContentState) -> ContentState:
 
 def formatter_node(state: ContentState) -> ContentState:
     """
-    排版：将文章 + 选中图片嵌入微信/小红书模板
+    排版：将文章 + 选中图片嵌入微信/小红书模板。
 
-    流程：
-      1. Markdown → 微信兼容 HTML（段落、标题、引用、列表）
-      2. 在正确位置插入选中的配图 <img> 标签
-      3. 匹配模板，渲染完整 HTML
-      4. 持久化到 formatted.html
+    统一复用 scripts/formatter.py 中的共享实现，避免 nodes.py 与 formatter.py
+    各自维护一套模板匹配 / 图片插入逻辑而产生漂移。
     """
     import jinja2
-    import re
+    import formatter as cp_formatter
 
     article_content = state.get("article_edited") or state.get("article", {}).get("content", "")
     article = state.get("article", {})
@@ -948,44 +1002,49 @@ def formatter_node(state: ContentState) -> ContentState:
     visual_plan = state.get("visual_plan", {})
     run_id = state["run_id"]
     generated_cover = state.get("generated_cover", {})
-
-    # ── Step 1: Markdown → 微信兼容 HTML ──
-
-    content_html = _markdown_to_wechat_html(article_content or "", platform)
-
-    # ── Step 2: 插入选中的配图 ──
-
-    placements = visual_plan.get("placements", [])
     generated = state.get("generated_images", [])
 
-    # 建立 placement_id → 图片路径的映射（每个 placement 只有一张图）
+    # ── Step 1: 先确定模板（要吃 director.style）──
+    director_style = visual_plan.get("style", "") if isinstance(visual_plan, dict) else ""
+    topic_keywords = state.get("topic", {}).get("keywords", []) or []
+    template_name = cp_formatter.match_template(platform, topic_keywords, director_style=director_style)
+
+    # ── Step 2: Markdown → HTML（模板感知）──
+    content_html = cp_formatter.markdown_to_wechat_html(article_content or "", platform, template_name=template_name)
+
+    # ── Step 3: 插图（共享定位算法）──
+    placements = visual_plan.get("placements", []) if isinstance(visual_plan, dict) else []
     image_map = {}
-    for img in generated:
-        pid = img.get("placement_id", "")
-        if pid and img.get("success", True) and img.get("file_path"):
-            image_map[pid] = img["file_path"]
 
-    # 在 content_html 中根据段落位置插入图片
+    # 先尝试 selected_images 匹配；单候选模式下 option=None 也允许 fallback
+    for pid, option in selected.items():
+        matched = None
+        for img in generated:
+            if img.get("placement_id") == pid and img.get("option") == option and img.get("success", True) and img.get("file_path"):
+                matched = img
+                break
+        if matched is None:
+            for img in generated:
+                if img.get("placement_id") == pid and img.get("success", True) and img.get("file_path"):
+                    matched = img
+                    break
+        if matched:
+            image_map[pid] = matched.get("file_path", "")
+
+    if not image_map:
+        for img in generated:
+            if img.get("success", True) and img.get("placement_id") and img.get("file_path"):
+                image_map[img["placement_id"]] = img["file_path"]
+
     if placements and image_map:
-        content_html = _insert_images_into_html(
-            content_html, placements, image_map, platform, run_id,
-        )
+        content_html = cp_formatter.insert_images(content_html, placements, image_map, platform, run_id, template_name=template_name)
 
-    # ── Step 3: 匹配模板 ──
-
-    mapping_path = CONFIG_DIR / "template-mapping.yaml"
-    mapping = yaml.safe_load(mapping_path.read_text(encoding="utf-8")) if mapping_path.exists() else {}
-
-    template_name = _match_template(mapping, platform, state.get("topic", {}).get("keywords", []))
+    # ── Step 4: 渲染完整 HTML ──
     template_path = PROJECT_ROOT / "templates" / platform / template_name
-
     if not template_path.exists():
         template_path = PROJECT_ROOT / "templates" / platform / "base.html"
 
     template_str = template_path.read_text(encoding="utf-8")
-
-    # ── Step 4: 渲染完整 HTML ──
-
     config = load_pipeline_config()
     author = config.get("wechat", {}).get("author", "ContentPipe")
 
@@ -1001,7 +1060,7 @@ def formatter_node(state: ContentState) -> ContentState:
         date=datetime.now().strftime("%Y-%m-%d"),
         lead=article.get("subtitle", ""),
         content=content_html,
-        category=", ".join(state.get("topic", {}).get("keywords", [])[:2]),
+        category=", ".join(topic_keywords[:2]),
         cover_url=cover_url,
     )
 
@@ -1010,7 +1069,7 @@ def formatter_node(state: ContentState) -> ContentState:
     _save_artifact(run_id, "formatted.html", html)
     _save_artifact(run_id, "content_body.html", content_html)
     _save_state(state)
-    logger.info("Formatted: %s chars, %s images inserted", len(html), len(image_map))
+    logger.info("Formatted: %s chars, %s images inserted, template=%s", len(html), len(image_map), template_name)
     return state
 
 
@@ -1356,8 +1415,8 @@ def _publish_wechat(state: dict, config: dict) -> dict:
     from tools import wechat_get_token, wechat_upload_image, wechat_upload_permanent_image, wechat_create_draft
 
     wechat_config = config.get("wechat", {})
-    app_id = wechat_config.get("app_id", "")
-    app_secret = wechat_config.get("app_secret", "")
+    app_id = os.getenv("WECHAT_APPID", "") or wechat_config.get("app_id", "")
+    app_secret = os.getenv("WECHAT_SECRET", "") or wechat_config.get("app_secret", "")
 
     # 未配置微信凭证，仅本地保存
     if not app_id or not app_secret:

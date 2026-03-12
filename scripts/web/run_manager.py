@@ -415,8 +415,19 @@ def get_run_artifact(run_id: str, filename: str) -> str | None:
 
 
 def get_run_image_path(run_id: str, image_name: str) -> Path | None:
-    path = OUTPUT_DIR / "runs" / run_id / "images" / image_name
-    return path if path.exists() else None
+    images_dir = OUTPUT_DIR / "runs" / run_id / "images"
+    path = images_dir / image_name
+    if path.exists():
+        return path
+
+    # 兼容：前端常按 .jpg 请求，但用户上传可能是 .png/.webp 等
+    req = Path(image_name)
+    stem = req.stem
+    for ext in [".jpg", ".jpeg", ".png", ".webp", ".gif"]:
+        candidate = images_dir / f"{stem}{ext}"
+        if candidate.exists():
+            return candidate
+    return None
 
 
 def get_dashboard_stats() -> dict:
