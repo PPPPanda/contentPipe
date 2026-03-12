@@ -76,7 +76,7 @@ scout → researcher → writer → director → image_gen → formatter → pub
 |------|---------|------|------|
 | 🔍 Scout | 选题策划 | ✅ | 热搜分析+社交搜索，输出完整 Briefing |
 | 📚 Researcher | 深度调研 | ✅ | 事实核查+证据包，输出 writer_packet |
-| ✍️ Writer | 写手+去AI味 | ✅ | GPT 5.4 写稿 → Sonnet 4.6 去AI味 |
+| ✍️ Writer | 唯一作者人格 | ✅ | GPT 5.4 写稿/审核聊天 → Extractor 分离 reply/article → Sonnet 4.6 内部 polish |
 | 🎬 Director | 视觉导演 | ✅ | 配图方案，支持图片上传/替换/删除 |
 | 🖼️ Image Gen | 图片生成 | ⚙️ | Pollinations.ai 自动生成 |
 | 📐 Formatter | 排版引擎 | ✅ | Markdown→微信 HTML，图文精确匹配 |
@@ -129,10 +129,11 @@ POST http://localhost:8765/api/runs/{run_id}/chat
 |------|------|------|
 | Scout | qwen3.5-plus | 快速+结构化 |
 | Researcher | qwen3.5-plus | 量大+理解力 |
-| Writer | gpt-5.4 | 创造力最强 |
-| De-AI | sonnet-4-6 | 语感+反检测 |
+| Writer Main | gpt-5.4 | 唯一作者人格，写稿+审核聊天改稿 |
+| Writer Extractor | qwen3.5-flash | reply/article 分离，避免正文混入说明文字 |
+| De-AI | sonnet-4-6 | 内部 polish，隐藏工序 |
 | Director | qwen3.5-plus | 策划能力 |
-| 意图判断 | qwen3.5-flash | 轻量快速 |
+| 意图判断 | qwen3.5-flash | 轻量快速（结构化节点） |
 | YAML 同步 | qwen3.5-flash | 结构化快速 |
 
 可在 `config/pipeline.yaml` 的 `llm_overrides` 覆盖。

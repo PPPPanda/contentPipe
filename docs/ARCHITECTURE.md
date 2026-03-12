@@ -1,6 +1,6 @@
-# ContentPipe Architecture v0.7.1
+# ContentPipe Architecture v0.7.2
 
-> 最后更新: 2026-03-11
+> 最后更新: 2026-03-12
 > 形态: OpenClaw Plugin（managed-service）
 
 ## 1. 设计哲学
@@ -12,7 +12,7 @@
 - **信息瀑布**：上游节点的输出自动成为下游的输入，用户的讨论意见也随之传递
 - **断点可恢复**：状态持久化到 YAML，任意节点可断点续跑
 - **双模式**：人工审核（每步暂停）或全自动（一键到底）
-- **实时同步**：审核对话中的修改意见实时写回 YAML/文章，下游节点以最新版本为准
+- **逐轮提交仲裁**：每次节点运行（初始执行 / 审核追问 / 重试）后，Python 都会读回正式产物并做提交仲裁；MVP 阶段先做最小提交判定，后续再补深层校验
 
 ## 2. 系统架构
 
@@ -48,8 +48,10 @@
 
 - ContentPipe 通过 `x-openclaw-agent-id: contentpipe-blank` 路由到空白 agent
 - 同时保留独立 `x-openclaw-session-key`，保证每个 run / node 的上下文隔离
-- blank-agent 的职责不是返回一段“可解析聊天文本”，而是**直接把正式产物写入项目目录**
-- Pipeline 下游节点以文件为准，不以聊天输出为准
+- blank-agent 的职责是承载节点的**正式产物修改**（初始执行 + 后续审核追问）
+- 节点收到命令后先自行执行任务并尝试修改自己的正式产物文件
+- Python 在**每一轮 LLM 运行后**读回文件，并先做最小提交判定；更深层的格式/规范校验和带行号反馈作为下一阶段增强
+- Pipeline 下游节点以正式产物文件为准，不以聊天解释文字为准
 
 当前正式约束：
 
@@ -88,8 +90,9 @@ plugins/content-pipeline/skills/
 output/runs/{run_id}/
 ├── chat_scout.json         ← Scout 执行 + 审核聊天
 ├── chat_researcher.json    ← Researcher 执行 + 审核聊天
-├── chat_writer.json        ← Writer 执行 + 审核聊天
+├── chat_writer.json        ← Writer 执行 + 审核聊天（唯一作者人格）
 ├── chat_director.json      ← Director 执行 + 审核聊天
+├── writer_last_exchange.json ← Writer 最近一次审核改稿调试记录（可选）
 └── ...
 ```
 
@@ -99,6 +102,22 @@ output/runs/{run_id}/
 x-openclaw-agent-id: contentpipe-blank
 x-openclaw-session-key: contentpipe:{run_id}:{node_id}:main
 ```
+
+节点的规范形态是：**一个节点 = 一个主 session = 一个主提示词 = 一个正式产物文件**。
+
+```text
+contentpipe:{run_id}:scout:main
+contentpipe:{run_id}:researcher:main
+contentpipe:{run_id}:writer:main
+contentpipe:{run_id}:director:main
+contentpipe:{run_id}:formatter:main
+```
+
+说明：
+- 初始执行与后续审核追问共用同一个 node session / prompt，属于同一个连续 agent 人格
+- 节点可以在审核阶段继续直接修改自己的正式产物文件
+- 同一个节点的“继续修、重试、用户追问”都沿用这个连续 session
+- 个别内部 helper lane（例如去 AI 味、图片细化）可以作为实现细节保留，但**不是架构主路径**，也不改变“单节点单主 session”的设计
 
 ### 3.2 消息分层：internal vs visible
 
@@ -112,26 +131,82 @@ x-openclaw-session-key: contentpipe:{run_id}:{node_id}:main
 {"role": "assistant", "content": "好的，从成本角度...", "tag": "user_chat"}
 ```
 
-### 3.3 实时同步机制
+### 3.3 逐轮执行 / 最小提交 / 后续校验机制
 
-审核对话中的修改**实时写回 state**（不需要等用户点「继续」）：
+无论是**节点初始执行**、**审核聊天追问**还是**手动重试**，都走同一个闭环：
 
 ```
-用户发消息 → AI 回复 → 意图判断(qwen3.5-flash)
-                           ↓ YES=有修改意图
-                      完整同步: 当前YAML + 对话 → LLM → 更新后YAML → 写回state
-                           ↓
-                      前端左栏卡片自动刷新（绿框闪一下）
+收到命令 / 用户消息
+  → 当前节点主 agent（同一 session / 同一 prompt）执行任务并修改正式产物
+  → Python 读回正式产物文件
+  → 先做最小提交判定（是否存在 / 是否可读 / 是否写到正确路径 / 是否有变化）
+      ↓ 通过
+    更新 state / 写 prev / 刷新 UI / 允许下游继续消费
+      ↓ 失败
+    反馈“未成功提交正式产物”给同一节点继续修
 ```
 
-**同步覆盖的节点**：
+这意味着：
+- **每次 LLM 运行一轮，都必须经过 Python 读回正式产物**
+- 节点可以用追问方式持续修同一个文件
+- 用户审核聊天本质上也是“继续驱动同一个节点修正式产物”
 
-| 节点 | 同步的 state 字段 | 同步方式 |
-|------|------------------|---------|
-| Scout | topic, writer_brief, handoff_to_researcher, reference_articles, user_requirements | YAML 同步 |
-| Researcher | writer_packet, verification_results, evidence_backed_insights, open_issues | YAML 同步 |
-| Writer | article_edited（文章全文） | 文章改写同步 |
-| Director | visual_plan | YAML 同步 |
+关键约束：
+- **允许局部 edit，也允许整文件 write**；架构不强制修改方式
+- **Python 不信 agent 的口头确认**，只信正式产物文件的实际结果
+- **状态更新以正式产物为主**：必要时由 Python 从正式产物反推 state 对应字段
+- **纯讨论可以不改文件**；只有正式产物实际发生变化，才算本轮修改成功
+
+### 3.3.1 MVP 必做（当前阶段）
+
+当前阶段先不做深层内容校验，Python 至少必须做：
+
+1. **路径正确性**：节点只能修改自己的正式产物文件
+2. **文件存在性**：本轮结束后目标文件必须存在
+3. **文件可读性**：必须能以正确编码读回
+4. **变更检测**：本轮文件内容 / hash / mtime 至少有一个发生变化
+5. **state 回写**：由正式产物反推并刷新 state
+6. **prev / diff**：对可比对节点保留上一版本，支持 diff 与回滚
+7. **前端刷新**：只基于 Python 读回并接受的结果刷新 UI
+
+### 3.3.2 可后置（下一阶段补）
+
+以下内容校验先不作为 MVP 硬要求，但后续应逐步补齐：
+
+- Scout / Researcher 的 YAML schema 校验
+- Director 的 JSON schema 校验
+- Writer 的 document contract 校验（例如正文纯净度、禁止解释性话语混入）
+- 更细粒度的结构化错误反馈（行号 / 字段 / 失败原因）
+- 校验失败后的自动重试链路
+
+### 3.3.3 节点正式产物约定
+
+| 节点 | 正式产物 | Python MVP 提交动作 |
+|------|---------|---------------------|
+| Scout | `topic.yaml` | 读回文件、确认变更、刷新 `topic`/`writer_brief`/`reference_articles` 等 state |
+| Researcher | `research.yaml` | 读回文件、确认变更、刷新 `writer_packet` / 核查结果 |
+| Writer | `article_edited.md`（或初稿阶段 `article_draft.md`） | 读回正文、确认变更、刷新正文 / diff / 预览 |
+| Director | `visual_plan.json` | 读回文件、确认变更、刷新配图方案 |
+| Formatter | `formatted.html` | 读回文件、确认变更、刷新 HTML 预览 |
+
+这个协议的核心是：**节点的人格连续，但提交权交给 Python。**
+
+### 3.3.4 当前实现状态（2026-03-12）
+
+当前代码已经落地的主路径如下：
+
+- **Scout / Researcher / Director / Formatter**
+  - 审核聊天走同一个 node session
+  - LLM 可直接修改本节点正式产物
+  - Python 读回正式产物后做最小提交判定
+  - 成功则刷新 state 与左侧 UI
+- **Writer**
+  - `writer:main` 为连续主 session
+  - `writer-structure.md` 对应的结构 helper 每次 fresh session 运行
+  - 结构 helper 负责把正式正文落到 `article_edited.md`
+  - Python 再读回正文、写 `.prev`、更新 `state.article_edited`、刷新左侧 UI
+- 旧的 `_sync_chat_to_state()` 二次 YAML 同步链路已经退役，不再作为主路径
+- 旧的 `writer-extractor.md` 已移入 `prompts/deprecated/`，不再挂主链路
 
 ### 3.4 跨节点数据传递
 
@@ -175,9 +250,22 @@ Scout session                    Researcher session
 - **发任意 URL** → Jina Reader 抓取
 - **"搜一下 XXX"** → Brave Search + 小红书搜索
 
-## 5. Writer 三层消费结构
+## 5. Writer：连续主 session + fresh 结构 LLM
 
-Writer 不再直接拼接零散字段，而是消费一份结构化的 `writer_context`：
+Writer 仍然消费结构化的 `writer_context`，但在运行方式上比其他节点更特殊：
+
+- **Writer 主 session 是连续的**：初稿、用户追问、审核聊天、重试，都走同一个 `writer:main` 连续 session
+- **结构 LLM 是 fresh session**：每次单独启动一个新的 helper session，用来读取 Writer 主 session 里产出的正文，做结构化整理 / 反 AI 对抗 / 正式正文提取
+- **Python 仍是最终仲裁者**：不管 Writer 主 session 还是结构 LLM 产出什么，最终都要经过 Python 读回文件、做提交仲裁、刷新 UI
+
+Writer 的核心原则：
+- **唯一作者人格**：同一个 Writer 主 session 负责持续写稿、追问、改稿；
+- **主 session 连续**：用户追问和 retry 都沿用这个 session，不重新开新人格；
+- **结构 helper 独立**：结构 LLM 每次 fresh session，不继承旧对话负担，只做“把正文整理成合规正式产物 + 把多余解释留给用户”这件事；
+- **正式产物单一**：审核阶段唯一正式正文仍然是 `article_edited.md`；
+- **提交由 Python 仲裁**：Python 读取正文、做最小提交判定、写 `.prev`、更新 state、驱动 diff/UI；正文内容契约校验后续再补。
+
+Writer 不直接拼接零散字段，而是消费一份结构化的 `writer_context`：
 
 ```yaml
 # 第 1 层：立题层（来自 Scout）
@@ -199,8 +287,24 @@ writer_packet:
   useful_data: [...]
 ```
 
-### 去 AI 味自动执行
-Writer 节点内部自动调用去 AI 味 LLM（Sonnet 4.6），用独立 session 不污染 Writer 对话。
+### Writer 审核阶段闭环
+
+审核聊天阶段：
+1. 用户向 `writer:main` 追问/要求改稿
+2. `writer:main` 在连续 session 中继续生成正文与说明
+3. fresh 的结构 LLM 读取这轮正文，做结构化整理 / 反 AI 对抗 / 正文抽取
+4. 结构 LLM 将正式正文写入 `article_edited.md`，把多余解释性话语留给用户侧
+5. Python 读取 `article_edited.md` 并做最小提交判定（存在 / 可读 / 正确路径 / 有变化）
+6. 通过后更新 `state.article_edited`、写 `.prev`、刷新左栏和 diff
+7. 若失败，Python 把“未成功提交正式正文”的反馈再送回相应链路继续修
+
+> 注：Writer 的正文内容契约校验（例如解释话语混入正文、结构污染、反 AI 纯净度）暂不作为 MVP 硬门槛，后续再补。
+
+### 去 AI 味 / 结构化 helper
+“去 AI 味”与“结构化整理”都可以由 Writer 的 helper LLM 承担；它们属于 Writer 节点内部实现，而不是新的用户交互人格。关键约束是：
+- Writer 主 session 连续
+- helper session 每次 fresh
+- Python 永远负责最终校验与提交
 
 ## 6. 模板系统
 
@@ -260,18 +364,17 @@ Director 审核页面的配图方案面板：
 
 | 角色 | 模型 | 用途 |
 |------|------|------|
-| Scout | anthropic/claude-sonnet-4-6 | 选题分析 |
-| Researcher | anthropic/claude-sonnet-4-6 | 深度调研 |
-| Writer | openai-codex/gpt-5.4 | 写作主模型 |
-| De-AI Editor | anthropic/claude-sonnet-4-6 | 去 AI 味（独立 session） |
-| Director | anthropic/claude-opus-4-6 | 配图方案 |
+| Scout | anthropic/claude-sonnet-4-6 | 选题分析 + 审核追问 |
+| Researcher | anthropic/claude-sonnet-4-6 | 深度调研 + 审核追问 |
+| Writer Main | openai-codex/gpt-5.4 | 连续主 session：写稿 + 审核聊天 + 改稿 |
+| Writer Structure LLM | dashscope/qwen3.5-flash | fresh session：读取 Writer 正文，做结构整理 / 反 AI 对抗 / 正文落盘 |
+| De-AI Editor | anthropic/claude-sonnet-4-6 | Writer 节点内部 polish（可并入结构 helper 链路） |
+| Director | anthropic/claude-opus-4-6 | 配图方案 + 审核追问 |
 | Director Refine | dashscope/qwen3.5-plus | 配图细化/压缩 |
 | 图像 prompt helper | anthropic/claude-sonnet-4-6 | prompt 翻译/压缩 |
-| 意图判断 | dashscope/qwen3.5-flash | 审核对话是否有修改意图 |
-| YAML 同步 | dashscope/qwen3.5-flash | 对话→YAML 更新 |
-| 聊天节点 | 跟随节点配置 | 审核聊天用该节点同一个 model |
+| Formatter | anthropic/claude-sonnet-4-6 | 排版预览 + 审核追问 |
 
-**关键设计**：Writer 写稿 + 审核聊天 + 审核改写使用同一个 model，保持风格一致。
+**关键设计**：除 Writer 的“连续主 session + fresh 结构 helper”外，其余节点都走“单节点单主 session + 正式产物直接修改 + Python 逐轮提交仲裁”的统一闭环。
 
 ## 9. Pipeline 节点（7 步）
 
@@ -308,9 +411,13 @@ plugins/content-pipeline/
 │   ├── scout.md
 │   ├── researcher.md
 │   ├── writer.md
+│   ├── writer-review.md
+│   ├── writer-structure.md
 │   ├── de-ai-engine.md
 │   ├── art-director.md
-│   └── art-director-refine.md
+│   ├── art-director-refine.md
+│   └── deprecated/
+│       └── writer-extractor.md
 ├── templates/
 │   └── wechat/
 │       ├── base.html
@@ -372,7 +479,7 @@ plugins/content-pipeline/
 | 8 | Formatter + Publisher stub | ✅ |
 | 9 | Scout 新 schema + 三层消费 | ✅ |
 | 10 | Per-node session + internal/visible | ✅ |
-| 11 | 实时同步（对话→YAML/文章） | ✅ |
+| 11 | 实时同步（对话→正式产物→Python 校验提交） | ✅ |
 | 12 | 模板匹配修复 + 深色适配 | ✅ |
 | 13 | 图文匹配（after_section 精确插入） | ✅ |
 | 14 | Director 配图管理（上传/替换/删除） | ✅ |
