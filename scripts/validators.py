@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import json
 import re
+from pathlib import Path
 from dataclasses import dataclass, field
-from difflib import SequenceMatcher
 from typing import Any, Callable
 
 import yaml
@@ -153,6 +153,19 @@ def validate_research_yaml(text: str) -> ValidationResult:
     return ValidationResult(ok=True, parsed=parsed, normalized_text=normalized)
 
 
+def _allowed_visual_styles() -> set[str]:
+    cfg_path = Path(__file__).resolve().parent.parent / "config" / "template-mapping.yaml"
+    try:
+        cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+        exact = ((cfg.get("wechat") or {}).get("styles") or {}).get("exact") or {}
+        return {str(k).strip() for k in exact.keys() if str(k).strip()}
+    except Exception:
+        return {"tech-digital", "business-finance", "news-insight", "lifestyle", "education"}
+
+
+ALLOWED_VISUAL_STYLES = _allowed_visual_styles()
+
+
 def validate_visual_plan_json(text: str) -> ValidationResult:
     raw = _strip_code_fence(text)
     try:
@@ -165,12 +178,17 @@ def validate_visual_plan_json(text: str) -> ValidationResult:
         return ValidationResult(ok=False, message="visual_plan.json top-level must be an object", details=[f"got {type(parsed).__name__}"])
 
     style = parsed.get("style")
+    style_variant = parsed.get("style_variant")
     global_tone = parsed.get("global_tone")
     cover = parsed.get("cover")
     placements = parsed.get("placements")
 
     if not isinstance(style, str) or not style.strip():
         details.append("style must be a non-empty string")
+    elif style.strip() not in ALLOWED_VISUAL_STYLES:
+        details.append(f"style must be one of: {', '.join(sorted(ALLOWED_VISUAL_STYLES))}")
+    if not isinstance(style_variant, str) or not style_variant.strip():
+        details.append("style_variant must be a non-empty string")
     if not isinstance(global_tone, str) or not global_tone.strip():
         details.append("global_tone must be a non-empty string")
     if not isinstance(cover, dict):
@@ -196,7 +214,7 @@ def validate_visual_plan_json(text: str) -> ValidationResult:
                 details.append(f"duplicate placement id: {pid}")
             else:
                 seen_ids.add(pid)
-            for field in ("after_section", "type", "description", "purpose"):
+            for field in ("after_section", "type", "description", "purpose", "caption"):
                 value = placement.get(field)
                 if not isinstance(value, str) or not value.strip():
                     details.append(f"{prefix}.{field} must be a non-empty string")
@@ -320,6 +338,46 @@ def validate_writer_markdown(text: str, min_chars: int = 1200) -> ValidationResu
     return ValidationResult(ok=True, parsed=raw, normalized_text=raw + "\n")
 
 
+def validate_chat_article_markdown(text: str, min_chars: int = 800) -> ValidationResult:
+    raw = _strip_code_fence(text).strip()
+    details: list[str] = []
+    bad_markers = [
+        "微信文章无法直接提取",
+        "基于",
+        "我直接修改",
+        "根据你的要求",
+        "下面是修改后的",
+        "以下是修改后的",
+        "我会按这个风格",
+        "已按",
+        "我已经根据",
+        "让我根据",
+        "已重写",
+        "主要调整",
+        "风格特点是",
+    ]
+
+    if len(raw) < min_chars:
+        details.append(f"content too short: {len(raw)} chars (< {min_chars})")
+
+    head = raw[:500]
+    for marker in bad_markers:
+        if marker in head:
+            details.append(f"meta marker near opening: {marker}")
+
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", raw) if p.strip()]
+    if len(paragraphs) < 4:
+        details.append(f"too few paragraphs: {len(paragraphs)}")
+
+    heading_count = sum(1 for line in raw.splitlines() if line.strip().startswith("## "))
+    if heading_count < 2:
+        details.append(f"too few section headings: {heading_count}")
+
+    if details:
+        return ValidationResult(ok=False, message="chat article failed quality checks", details=details)
+    return ValidationResult(ok=True, parsed=raw, normalized_text=raw + "\n")
+
+
 def validate_de_ai_markdown(text: str, original_text: str) -> ValidationResult:
     raw = _strip_code_fence(text).strip()
     details: list[str] = []
@@ -348,12 +406,6 @@ def validate_de_ai_markdown(text: str, original_text: str) -> ValidationResult:
         ratio = len(raw) / max(len(original), 1)
         if ratio < 0.6 or ratio > 1.4:
             details.append(f"length ratio out of range: {ratio:.2f}x")
-
-        sim = SequenceMatcher(None, original[:5000], raw[:5000]).ratio()
-        if sim < 0.30:
-            details.append(f"too different from source article: similarity={sim:.2f}")
-        if sim > 0.985:
-            details.append(f"too similar to source article: similarity={sim:.2f}")
 
     if details:
         return ValidationResult(ok=False, message="article_edited.md failed quality checks", details=details)

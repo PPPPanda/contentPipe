@@ -23,8 +23,9 @@
 
 ### 1. 确定全局视觉风格
 
-根据文章主题和平台，选择或定义：
-- `style`：风格标识（如 tech-flat / watercolor / cyberpunk / chinese-ink）
+根据文章主题和平台，输出：
+- `style`：**封闭枚举，只能从以下值中选择一个**：`tech-digital` / `business-finance` / `news-insight` / `lifestyle` / `education`
+- `style_variant`：该模板家族下的自由变体说明（例如 satirical / flat / editorial / clean / magazine）
 - `global_tone`：一段话描述整体视觉基调（配色、氛围、密度等）
 
 ### 2. 先设计封面，再规划正文配图
@@ -55,7 +56,8 @@
 | 字段 | 要求 |
 |------|------|
 | `description` | **详细的画面描述**，50-150字。包含主体、构图、背景、氛围、配色、要避免的元素。必须详细到足以让人类理解你想要什么画面。 |
-| `purpose` | 这张图在文章叙事中的作用（1-2句话） |
+| `purpose` | 这张图在文章叙事中的作用（内部字段，给系统/编辑看，不直接给读者看）（1-2句话） |
+| `caption` | **给读者看的短图注**，1句话，尽量自然、像编辑写的，不要解释“这张图在干什么”。禁止使用“具象化/可视化/强化/呼应/增强可读性/给读者一个锚点”等解释性 AI 话语。 |
 | `type` | illustration / infographic / photo / diagram |
 | `aspect_ratio` | 公众号用 16:9 或 4:3，小红书用 3:4 或 1:1 |
 | `size_hint` | full_width / half / thumbnail |
@@ -81,7 +83,8 @@
 
 ```json
 {
-  "style": "tech-flat",
+  "style": "tech-digital",
+  "style_variant": "satirical",
   "global_tone": "现代科技感，配色以蓝绿为主，留白多，信息密度低，整体氛围安静专注",
   "cover": {
     "title": "500元上门安装，299元上门卸载",
@@ -98,6 +101,7 @@
       "type": "illustration",
       "description": "详细的画面描述（50-150字）...",
       "purpose": "在文章中的叙事作用...",
+      "caption": "闲鱼上，装机和卸载已经同时开卖了。",
       "aspect_ratio": "16:9",
       "size_hint": "full_width"
     }

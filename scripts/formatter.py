@@ -290,10 +290,11 @@ def insert_images(content_html: str, placements: list, image_map: dict, platform
         else:
             img_src = f"/api/runs/{run_id}/images/{pid}.png"
 
-        # 图注（深色模板用浅色文字）
+        # 图注：只渲染给读者看的 caption，不渲染内部 purpose
         caption_html = ""
-        if purpose:
-            caption_html = f'\n<p style="text-align:center;font-size:12px;color:{caption_color};margin:4px 0 16px;">{purpose}</p>'
+        caption = str(placement.get("caption", "")).strip()
+        if caption:
+            caption_html = f'\n<p style="text-align:center;font-size:12px;color:{caption_color};margin:4px 0 16px;">{caption}</p>'
 
         img_tag = f'\n<img src="{img_src}" alt="{desc}" {style}>{caption_html}\n'
         blocks.insert(min(para_idx, len(blocks)), img_tag)
@@ -304,11 +305,11 @@ def insert_images(content_html: str, placements: list, image_map: dict, platform
 # ── 模板匹配 ─────────────────────────────────────────────────
 
 def match_template(platform: str, keywords: list[str], director_style: str = "") -> str:
-    """根据 Director style + 关键词匹配排版模板
+    """根据 Director style + 关键词匹配排版模板。
 
     优先级:
-    1. Director style 直接映射（如 style="tech-flat" → tech-digital.html）
-    2. keywords 子串匹配（"AI Agent" 包含 "AI" → tech-digital.html）
+    1. YAML 中配置的 style exact / aliases / prefixes
+    2. keywords 子串匹配
     3. fallback 到 default
     """
     mapping_path = CONFIG_DIR / "template-mapping.yaml"
@@ -319,23 +320,25 @@ def match_template(platform: str, keywords: list[str], director_style: str = "")
     platform_config = mapping.get(platform, {})
     rules = platform_config.get("mapping", [])
     default = platform_config.get("default", "base.html")
+    styles_cfg = platform_config.get("styles", {}) if isinstance(platform_config, dict) else {}
+    exact_map = styles_cfg.get("exact", {}) if isinstance(styles_cfg, dict) else {}
+    alias_map = styles_cfg.get("aliases", {}) if isinstance(styles_cfg, dict) else {}
+    prefix_map = styles_cfg.get("prefixes", {}) if isinstance(styles_cfg, dict) else {}
 
-    # ── 1. Director style 直接映射 ──
-    STYLE_TO_TEMPLATE = {
-        "tech-flat": "tech-digital.html",
-        "tech-minimal": "tech-digital.html",
-        "tech-digital": "tech-digital.html",
-        "cyberpunk": "tech-digital.html",
-        "watercolor": "lifestyle.html",
-        "chinese-ink": "lifestyle.html",
-        "business": "business-finance.html",
-        "news": "news-insight.html",
-        "education": "education.html",
-    }
+    # ── 1. Director style 直接映射（来自 YAML 配置）──
     if director_style:
         style_lower = director_style.lower().strip()
-        if style_lower in STYLE_TO_TEMPLATE:
-            tpl = STYLE_TO_TEMPLATE[style_lower]
+        tpl = None
+        if style_lower in exact_map:
+            tpl = exact_map[style_lower]
+        elif style_lower in alias_map:
+            tpl = alias_map[style_lower]
+        else:
+            for prefix, candidate_tpl in prefix_map.items():
+                if style_lower.startswith(str(prefix).lower().strip()):
+                    tpl = candidate_tpl
+                    break
+        if tpl:
             tpl_path = TEMPLATES_DIR / platform / tpl
             if tpl_path.exists():
                 return tpl

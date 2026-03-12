@@ -2,6 +2,29 @@
 # Pipeline Formatter 阶段根据话题分类自动匹配模板
 
 wechat:
+  styles:
+    exact:
+      tech-digital: tech-digital.html
+      business-finance: business-finance.html
+      news-insight: news-insight.html
+      lifestyle: lifestyle.html
+      education: education.html
+    aliases:
+      tech-flat: tech-digital.html
+      tech-minimal: tech-digital.html
+      tech-satirical: tech-digital.html
+      tech-editorial: tech-digital.html
+      cyberpunk: tech-digital.html
+      watercolor: lifestyle.html
+      chinese-ink: lifestyle.html
+      business: business-finance.html
+      news: news-insight.html
+    prefixes:
+      tech: tech-digital.html
+      business: business-finance.html
+      news: news-insight.html
+      edu: education.html
+      life: lifestyle.html
   mapping:
     # 科技类
     - keywords: ["科技", "AI", "人工智能", "数码", "编程", "互联网", "区块链", "Web3", "芯片", "手机", "电脑", "软件", "开源"]
