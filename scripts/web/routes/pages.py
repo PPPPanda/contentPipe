@@ -7,6 +7,7 @@ ContentPipe Web UI — 页面路由
 from __future__ import annotations
 
 from pathlib import Path
+import os
 
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -98,11 +99,13 @@ async def run_detail(request: Request, run_id: str):
     run = get_run(run_id)
     if not run:
         return HTMLResponse("<h1>Run not found</h1>", status_code=404)
+    env_ready = bool(os.getenv("WECHAT_APPID")) and bool(os.getenv("WECHAT_SECRET"))
     return templates.TemplateResponse("run_detail.html", {
         "request": request,
         "run": run,
         "nodes": PIPELINE_NODES,
         "page": "runs",
+        "wechat_publish_ready": env_ready,
     })
 
 

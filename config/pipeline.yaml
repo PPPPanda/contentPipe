@@ -36,8 +36,11 @@ scout:
     - "Agent"
   suggestions_count: 5
 
-# 账号配置
+# 微信公众号发布配置
+wechat:
+  author: "Mister Panda"
+
+# 账号配置（兼容旧字段，待移除）
 accounts:
   wechat:
-    author: "ContentPipe"
-    # appid/secret 通过环境变量: WECHAT_APPID, WECHAT_SECRET
+    author: "Mister Panda"

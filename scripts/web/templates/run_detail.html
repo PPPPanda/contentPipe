@@ -22,6 +22,12 @@
         ▶ 继续
     </button>
     {% endif %}
+    {% if run.status == 'running' and run.current_stage == 'image_gen' %}
+    <button onclick="doActionRedirect('/api/runs/{{ run.run_id }}/rollback/image-gen-to-director', '图片生成较慢，回到 AI 导演审核态？这会清空当前已生成/待生成图片状态。', '/runs/{{ run.run_id }}/review?node=director')"
+            class="px-3 py-1.5 bg-amber-600 text-white text-sm rounded-lg hover:bg-amber-500 transition">
+        ↩ 回到 AI 导演审核态
+    </button>
+    {% endif %}
     {% if run.status in ['running', 'review', 'pending'] %}
     <button onclick="doAction('/api/runs/{{ run.run_id }}/cancel', '确定暂停此 Run？')"
             class="btn-warn px-3 py-1.5 text-sm">
@@ -160,6 +166,12 @@
                         {% if node.status == 'review' %}审核 →{% else %}💬 查看{% endif %}
                     </a>
                 {% endif %}
+                {% if node.id == 'image_gen' and run.status == 'running' and run.current_stage == 'image_gen' %}
+                    <button onclick="doActionRedirect('/api/runs/{{ run.run_id }}/rollback/image-gen-to-director', '图片生成较慢，回到 AI 导演审核态？这会清空当前已生成/待生成图片状态。', '/runs/{{ run.run_id }}/review?node=director')"
+                            class="px-2 py-1 text-xs rounded bg-amber-600 text-white hover:bg-amber-500 transition">
+                        ↩ 回导演
+                    </button>
+                {% endif %}
 
                 {% if node.status == 'completed' %}
                     <button onclick="toggleNodeOutput(this, '{{ run.run_id }}', '{{ node.id }}')"
@@ -198,12 +210,24 @@
         <h3 class="text-sm font-semibold text-slate-400 uppercase tracking-wider">🎨 配图方案</h3>
         <span class="text-xs text-slate-500">{{ run.visual_plan.style | default('') }}</span>
     </div>
-    <p class="text-xs text-slate-400 mb-3">{{ run.visual_plan.global_tone | default('') | truncate(120) }}</p>
+    <p class="text-xs text-slate-400 mb-3 whitespace-pre-wrap break-words">{{ run.visual_plan.global_tone | default('') }}</p>
     <div class="space-y-2">
         {% for p in run.visual_plan.placements | default([]) %}
         <div class="bg-slate-800/50 rounded p-3">
             <p class="text-xs text-sky-400 mb-1">配图 {{ loop.index }} · {{ p.purpose | default('') }}</p>
-            <p class="text-sm text-slate-300">{{ p.description | default('') | truncate(150) }}</p>
+            {% set desc = p.description | default('') %}
+            {% if desc|length > 160 %}
+            <details class="text-sm text-slate-300 group">
+                <summary class="cursor-pointer list-none text-slate-300 hover:text-white">
+                    {{ desc[:160] }}…
+                    <span class="text-sky-400 ml-1 group-open:hidden">展开</span>
+                    <span class="text-sky-400 ml-1 hidden group-open:inline">收起</span>
+                </summary>
+                <p class="mt-2 whitespace-pre-wrap break-words">{{ desc }}</p>
+            </details>
+            {% else %}
+            <p class="text-sm text-slate-300 whitespace-pre-wrap break-words">{{ desc }}</p>
+            {% endif %}
         </div>
         {% endfor %}
     </div>
@@ -211,6 +235,15 @@
 {% endif %}
 
 <!-- 快捷操作 -->
+{% if run.current_stage == 'publisher' and not wechat_publish_ready %}
+<div class="card p-4 mt-4 border-amber-700/30 bg-amber-900/10">
+    <h3 class="text-amber-300 text-sm font-semibold mb-2">📌 Publisher 当前不会真正发到公众号</h3>
+    <p class="text-xs text-amber-100/90 leading-relaxed">
+        当前环境未检测到 <code>WECHAT_APPID</code> 和 <code>WECHAT_SECRET</code>。
+        Publisher 只能本地保存产物，不会创建微信公众号草稿。
+    </p>
+</div>
+{% endif %}
 {% if run.status == 'completed' %}
 <div class="mt-4 flex gap-3">
     <a href="/runs/{{ run.run_id }}/preview"

@@ -6,6 +6,14 @@ set -euo pipefail
 
 SCRIPT_PATH="$(readlink -f "$0")"
 PLUGIN_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+# 加载本地环境变量（如果存在）
+if [ -f "$PLUGIN_DIR/.env.local" ]; then
+    set -a
+    source "$PLUGIN_DIR/.env.local"
+    set +a
+    echo "✅ 已加载 .env.local"
+fi
 APP_NAME="contentpipe"
 PORT="${CONTENTPIPE_PORT:-8765}"
 HOST="${CONTENTPIPE_HOST:-0.0.0.0}"

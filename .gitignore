@@ -22,6 +22,9 @@ Thumbs.db
 
 # Secrets / local config
 .env
+.env.local
+scripts/output/
+*.bak.*
 .env.*
 !.env.example
 settings.local.yaml
