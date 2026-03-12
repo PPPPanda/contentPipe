@@ -338,46 +338,6 @@ def validate_writer_markdown(text: str, min_chars: int = 1200) -> ValidationResu
     return ValidationResult(ok=True, parsed=raw, normalized_text=raw + "\n")
 
 
-def validate_chat_article_markdown(text: str, min_chars: int = 800) -> ValidationResult:
-    raw = _strip_code_fence(text).strip()
-    details: list[str] = []
-    bad_markers = [
-        "微信文章无法直接提取",
-        "基于",
-        "我直接修改",
-        "根据你的要求",
-        "下面是修改后的",
-        "以下是修改后的",
-        "我会按这个风格",
-        "已按",
-        "我已经根据",
-        "让我根据",
-        "已重写",
-        "主要调整",
-        "风格特点是",
-    ]
-
-    if len(raw) < min_chars:
-        details.append(f"content too short: {len(raw)} chars (< {min_chars})")
-
-    head = raw[:500]
-    for marker in bad_markers:
-        if marker in head:
-            details.append(f"meta marker near opening: {marker}")
-
-    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", raw) if p.strip()]
-    if len(paragraphs) < 4:
-        details.append(f"too few paragraphs: {len(paragraphs)}")
-
-    heading_count = sum(1 for line in raw.splitlines() if line.strip().startswith("## "))
-    if heading_count < 2:
-        details.append(f"too few section headings: {heading_count}")
-
-    if details:
-        return ValidationResult(ok=False, message="chat article failed quality checks", details=details)
-    return ValidationResult(ok=True, parsed=raw, normalized_text=raw + "\n")
-
-
 def validate_de_ai_markdown(text: str, original_text: str) -> ValidationResult:
     raw = _strip_code_fence(text).strip()
     details: list[str] = []

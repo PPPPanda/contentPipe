@@ -54,6 +54,7 @@ def _node_official_artifact_path(run_id: str, node_id: str) -> Path | None:
     mapping = {
         "scout": run_dir / "topic.yaml",
         "researcher": run_dir / "research.yaml",
+        "writer": run_dir / "article_edited.md",
         "director": run_dir / "visual_plan.json",
         "formatter": run_dir / "formatted.html",
     }
@@ -486,27 +487,45 @@ async def api_save_article(run_id: str, body: dict):
 
 
 @router.get("/runs/{run_id}/diff")
-async def api_get_diff(run_id: str):
-    """获取文章改动 diff（当前 vs 上一版本）"""
+async def api_get_diff(run_id: str, node: str | None = None):
+    """获取节点改动 diff（当前 vs 上一版本）。
+
+    ?node=scout  → topic.yaml diff
+    ?node=writer → article_edited.md diff (default)
+    ?node=researcher → research.yaml diff
+    ?node=director → visual_plan.json diff
+    ?node=formatter → formatted.html diff
+    """
     import difflib
 
     run_dir = Path(__file__).parent.parent.parent.parent / "output" / "runs" / run_id
-    current_path = run_dir / "article_edited.md"
-    prev_path = run_dir / "article_edited.md.prev"
-    draft_path = run_dir / "article_draft.md"
+
+    # 确定要 diff 的文件
+    if node and node != "writer":
+        artifact_path = _node_official_artifact_path(run_id, node)
+        if not artifact_path:
+            return JSONResponse({"error": f"未知节点: {node}"}, status_code=400)
+        current_path = artifact_path
+        prev_path = run_dir / f"{artifact_path.name}.prev"
+        draft_path = None
+    else:
+        # 默认: writer article
+        current_path = run_dir / "article_edited.md"
+        prev_path = run_dir / "article_edited.md.prev"
+        draft_path = run_dir / "article_draft.md"
 
     if not current_path.exists():
-        return JSONResponse({"error": "当前文章不存在"}, status_code=404)
+        return JSONResponse({"error": f"当前产物不存在: {current_path.name}"}, status_code=404)
 
-    # 优先用 .prev（上一次审核改稿前的版本），fallback 用 article_draft.md（初稿）
+    # 优先用 .prev，fallback 用 draft（仅 writer）
     if prev_path.exists():
         base_path = prev_path
         from_label = "上一版本"
-    elif draft_path.exists():
+    elif draft_path and draft_path.exists():
         base_path = draft_path
         from_label = "初稿"
     else:
-        return JSONResponse({"diff": None, "message": "暂无历史版本"})
+        return JSONResponse({"diff": None, "has_diff": False, "message": "暂无历史版本"})
 
     current = current_path.read_text(encoding="utf-8").splitlines(keepends=True)
     previous = base_path.read_text(encoding="utf-8").splitlines(keepends=True)
@@ -518,7 +537,7 @@ async def api_get_diff(run_id: str):
         lineterm=""
     )
     diff_text = "\n".join(diff)
-    return {"diff": diff_text}
+    return {"diff": diff_text, "has_diff": bool(diff_text.strip())}
 
 
 # ── 节点数据 ──────────────────────────────────────────────────
@@ -1274,12 +1293,6 @@ async def api_update_settings_form(request: Request):
     return HTMLResponse(
         '<div class="text-green-400 text-sm mt-2">✅ 设置已保存</div>',
     )
-
-
-# ── 审核对话同步 ──────────────────────────────────────────────
-
-# 旧的 _sync_chat_to_state 链路已退役：
-# 审核聊天现在直接由节点主 session 修改正式产物，再由 Python 读回并提交。
 
 
 # ── 内部函数 ──────────────────────────────────────────────────
