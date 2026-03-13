@@ -2,11 +2,63 @@
 
 {% block title %}ContentPipe — 设置{% endblock %}
 {% block header %}设置{% endblock %}
-{% block header_actions %}{% endblock %}
+{% block header_actions %}
+<a href="/setup" class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-xs text-slate-300 rounded-lg transition">
+    🧙 重新引导设置
+</a>
+{% endblock %}
 
 {% block content %}
 <form hx-post="/api/settings" hx-target="#save-result" hx-swap="innerHTML"
       class="max-w-2xl space-y-6">
+
+    <!-- Gateway 连接 -->
+    <div class="card p-5">
+        <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">🔗 Gateway 连接</h2>
+
+        {% set pipeline = settings.get('pipeline', {}) %}
+        <div class="space-y-3">
+            <div class="flex items-center gap-4">
+                <label class="w-28 text-sm text-slate-300">Gateway URL</label>
+                <input type="text" name="gateway_url"
+                       value="{{ pipeline.get('gateway_url', 'http://localhost:18789') }}"
+                       class="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm focus:border-sky-500 focus:outline-none"
+                       id="settings-gateway-url">
+                <button type="button" onclick="testGatewaySettings()"
+                        class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-xs text-white rounded transition"
+                        id="settings-test-btn">
+                    测试
+                </button>
+            </div>
+            <div id="settings-gateway-result" class="ml-32 min-h-[20px]"></div>
+
+            <div class="flex items-center gap-4">
+                <label class="w-28 text-sm text-slate-300">调用模式</label>
+                <div class="flex gap-4">
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="llm_mode" value="gateway"
+                               {% if pipeline.get('llm_mode', 'gateway') == 'gateway' %}checked{% endif %}
+                               class="text-sky-500">
+                        <span class="text-sm text-slate-300">Gateway 代理</span>
+                    </label>
+                    <label class="flex items-center gap-2 cursor-pointer">
+                        <input type="radio" name="llm_mode" value="direct"
+                               {% if pipeline.get('llm_mode') == 'direct' %}checked{% endif %}
+                               class="text-sky-500">
+                        <span class="text-sm text-slate-300">直连 API</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-4">
+                <label class="w-28 text-sm text-slate-300">Agent ID</label>
+                <input type="text" name="gateway_agent_id"
+                       value="{{ pipeline.get('gateway_agent_id', 'contentpipe-blank') }}"
+                       placeholder="contentpipe-blank"
+                       class="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm placeholder-slate-600 focus:border-sky-500 focus:outline-none">
+            </div>
+        </div>
+    </div>
 
     <!-- LLM 模型 -->
     <div class="card p-5">
@@ -15,23 +67,66 @@
         <div class="space-y-3">
             <div class="flex items-center gap-4">
                 <label class="w-28 text-sm text-slate-300">默认模型</label>
-                <input type="text" name="default_model"
-                       value="{{ settings.get('pipeline', {}).get('default_model', 'dashscope/qwen3.5-plus') }}"
-                       class="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm focus:border-sky-500 focus:outline-none">
+                <select name="default_model" id="settings-default-model"
+                        class="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm focus:border-sky-500 focus:outline-none">
+                    <option value="{{ pipeline.get('default_llm', 'dashscope/qwen3.5-plus') }}">
+                        {{ pipeline.get('default_llm', 'dashscope/qwen3.5-plus') }}
+                    </option>
+                </select>
+                <button type="button" onclick="loadModelsForSettings()"
+                        class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-xs text-white rounded transition"
+                        title="从 Gateway 刷新模型列表">
+                    🔄
+                </button>
             </div>
 
-            <p class="text-xs text-slate-500 mt-3 mb-2">角色覆盖（留空使用默认模型）</p>
+            <p class="text-xs text-slate-500 mt-3 mb-2">角色覆盖（选"使用默认"则跟随默认模型）</p>
 
-            {% set overrides = settings.get('pipeline', {}).get('llm_overrides', {}) %}
-            {% for role, label in [('scout', 'Scout'), ('researcher', 'Researcher'), ('writer', 'Writer'), ('de_ai_editor', 'Editor'), ('director', 'Director')] %}
+            {% set overrides = pipeline.get('llm_overrides', {}) %}
+            {% for role, label in [('scout', '🔍 Scout'), ('researcher', '📚 Researcher'), ('writer', '✍️ Writer'), ('de_ai_editor', '✏️ Editor'), ('director', '🎬 Director')] %}
             <div class="flex items-center gap-4">
-                <label class="w-28 text-sm text-slate-400">{{ label }}</label>
-                <input type="text" name="model_{{ role }}"
-                       value="{{ overrides.get(role, '') }}"
-                       placeholder="使用默认模型"
-                       class="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm placeholder-slate-600 focus:border-sky-500 focus:outline-none">
+                <label class="w-28 text-xs text-slate-400">{{ label }}</label>
+                <select name="model_{{ role }}"
+                        class="settings-model-select flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm focus:border-sky-500 focus:outline-none"
+                        data-current="{{ overrides.get(role, '') }}">
+                    <option value="">使用默认</option>
+                    {% if overrides.get(role) %}
+                    <option value="{{ overrides[role] }}" selected>{{ overrides[role] }}</option>
+                    {% endif %}
+                </select>
             </div>
             {% endfor %}
+        </div>
+    </div>
+
+    <!-- 通知频道 -->
+    <div class="card p-5">
+        <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">📢 通知频道</h2>
+
+        <div class="space-y-3">
+            <div class="flex items-center gap-4">
+                <label class="w-28 text-sm text-slate-300">频道 ID</label>
+                <input type="text" name="notify_channel"
+                       value="{{ notify_channel }}"
+                       placeholder="Discord/KOOK 频道 ID（留空不通知）"
+                       class="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm placeholder-slate-600 focus:border-sky-500 focus:outline-none"
+                       id="settings-notify-channel">
+                <button type="button" onclick="loadChannelsForSettings()"
+                        class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-xs text-white rounded transition"
+                        title="从 Gateway 发现可用频道">
+                    🔍
+                </button>
+            </div>
+            <div id="settings-channel-picker" class="ml-32 hidden">
+                <select id="settings-channel-select" onchange="pickChannel(this)"
+                        class="w-full bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm focus:border-sky-500 focus:outline-none">
+                    <option value="">选择频道...</option>
+                </select>
+            </div>
+            <p class="text-xs text-slate-500 ml-32">
+                Pipeline 事件（等待审核、完成、失败）会推送到此频道。
+                目前支持 Discord。
+            </p>
         </div>
     </div>
 
@@ -39,9 +134,9 @@
     <div class="card p-5">
         <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">🎨 图片生成引擎</h2>
 
-        {% set current_engine = settings.get('pipeline', {}).get('image_engine', 'auto') %}
+        {% set current_engine = pipeline.get('image_engine', 'auto') %}
         <div class="space-y-2">
-            {% for value, label in [('dall-e-3', 'API: DALL-E 3'), ('dashscope', 'API: DashScope 通义万相'), ('browser:tongyi', '浏览器: 通义万相'), ('browser:jimeng', '浏览器: 即梦AI'), ('auto', '自动选择')] %}
+            {% for value, label in [('auto', '自动选择'), ('dall-e-3', 'API: DALL-E 3'), ('dashscope', 'API: DashScope 通义万相'), ('browser:tongyi', '浏览器: 通义万相'), ('browser:jimeng', '浏览器: 即梦AI')] %}
             <label class="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-slate-800">
                 <input type="radio" name="image_engine" value="{{ value }}"
                        {% if current_engine == value %}checked{% endif %}
@@ -58,11 +153,11 @@
 
         {% set wechat = settings.get('wechat', {}) %}
         <div class="mb-3 p-3 rounded-lg bg-amber-900/20 border border-amber-700/30 text-xs text-amber-200 leading-relaxed">
-            真正发布到微信公众号草稿箱需要在启动服务前配置环境变量：
-            <br><code class="text-amber-100">export WECHAT_APPID=你的AppID</code>
-            <br><code class="text-amber-100">export WECHAT_SECRET=你的AppSecret</code>
-            <br><br>并且需要把当前服务器出口 IP 加入公众号后台的 <strong>IP 白名单</strong>。
-            <br>如果未配置，Publisher 只会本地保存 HTML / 图片产物，不会创建公众号草稿。
+            发布到公众号草稿箱需要在 <code class="text-amber-100">.env.local</code> 中配置：
+            <br><code class="text-amber-100">WECHAT_APPID=你的AppID</code>
+            <br><code class="text-amber-100">WECHAT_SECRET=你的AppSecret</code>
+            <br><br>并把服务器出口 IP 加入公众号后台 <strong>IP 白名单</strong>。
+            未配置时 Publisher 只保存本地 HTML 产物。
         </div>
         <div class="space-y-3">
             <div class="flex items-center gap-4">
@@ -82,4 +177,89 @@
         <div id="save-result"></div>
     </div>
 </form>
+
+<script>
+async function testGatewaySettings() {
+    var url = document.getElementById('settings-gateway-url').value.trim();
+    var result = document.getElementById('settings-gateway-result');
+    var btn = document.getElementById('settings-test-btn');
+    if (!url) { result.innerHTML = '<span class="text-xs text-red-400">请输入地址</span>'; return; }
+    btn.disabled = true; btn.textContent = '...';
+    try {
+        var resp = await fetch('/api/setup/test-gateway', {
+            method: 'POST', headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({gateway_url: url})
+        });
+        var data = await resp.json();
+        if (data.ok) {
+            result.innerHTML = '<span class="text-xs text-green-400">✅ 连接成功 · ' + data.model_count + ' 模型</span>';
+        } else {
+            result.innerHTML = '<span class="text-xs text-red-400">❌ ' + (data.error || '连接失败') + '</span>';
+        }
+    } catch(e) {
+        result.innerHTML = '<span class="text-xs text-red-400">❌ ' + e.message + '</span>';
+    }
+    btn.disabled = false; btn.textContent = '测试';
+}
+
+async function loadModelsForSettings() {
+    var url = document.getElementById('settings-gateway-url').value.trim() || 'http://localhost:18789';
+    try {
+        var resp = await fetch('/api/setup/discover?gateway_url=' + encodeURIComponent(url));
+        var data = await resp.json();
+        if (data.models && data.models.length > 0) {
+            var defaultSel = document.getElementById('settings-default-model');
+            var currentVal = defaultSel.value;
+            defaultSel.innerHTML = '';
+            data.models.forEach(function(m) {
+                var opt = document.createElement('option');
+                opt.value = m.id; opt.textContent = m.label;
+                if (m.id === currentVal) opt.selected = true;
+                defaultSel.appendChild(opt);
+            });
+            document.querySelectorAll('.settings-model-select').forEach(function(sel) {
+                var cur = sel.getAttribute('data-current') || sel.value;
+                var first = document.createElement('option');
+                first.value = ''; first.textContent = '使用默认';
+                sel.innerHTML = '';
+                sel.appendChild(first);
+                data.models.forEach(function(m) {
+                    var opt = document.createElement('option');
+                    opt.value = m.id; opt.textContent = m.label;
+                    if (m.id === cur) opt.selected = true;
+                    sel.appendChild(opt);
+                });
+            });
+        }
+    } catch(e) { console.error(e); }
+}
+
+async function loadChannelsForSettings() {
+    var url = document.getElementById('settings-gateway-url').value.trim() || 'http://localhost:18789';
+    var picker = document.getElementById('settings-channel-picker');
+    var sel = document.getElementById('settings-channel-select');
+    try {
+        var resp = await fetch('/api/setup/discover?gateway_url=' + encodeURIComponent(url));
+        var data = await resp.json();
+        if (data.channels && data.channels.length > 0) {
+            sel.innerHTML = '<option value="">选择频道...</option>';
+            data.channels.forEach(function(ch) {
+                var opt = document.createElement('option');
+                opt.value = ch.id; opt.textContent = ch.label;
+                sel.appendChild(opt);
+            });
+            picker.classList.remove('hidden');
+        }
+    } catch(e) { console.error(e); }
+}
+
+function pickChannel(sel) {
+    if (sel.value) {
+        document.getElementById('settings-notify-channel').value = sel.value;
+    }
+}
+
+// 页面加载时自动刷新模型列表
+document.addEventListener('DOMContentLoaded', function() { loadModelsForSettings(); });
+</script>
 {% endblock %}

@@ -207,5 +207,6 @@ async def settings_page(request: Request):
     return templates.TemplateResponse("settings.html", {
         "request": request,
         "settings": settings,
+        "notify_channel": os.environ.get("CONTENTPIPE_NOTIFY_CHANNEL", ""),
         "page": "settings",
     })

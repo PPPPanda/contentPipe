@@ -1272,19 +1272,29 @@ async def api_update_settings_form(request: Request):
     form = await request.form()
     settings = load_settings()
 
-    # 更新 pipeline 配置
+    # Gateway 配置
     pipeline = settings.setdefault("pipeline", {})
+    if form.get("gateway_url"):
+        pipeline["gateway_url"] = str(form["gateway_url"]).strip().rstrip("/")
+    if form.get("llm_mode"):
+        pipeline["llm_mode"] = form["llm_mode"]
+    if form.get("gateway_agent_id"):
+        pipeline["gateway_agent_id"] = form["gateway_agent_id"]
+
+    # 默认模型
     if form.get("default_model"):
-        pipeline["default_model"] = form["default_model"]
+        pipeline["default_llm"] = form["default_model"]
     if form.get("image_engine"):
         pipeline["image_engine"] = form["image_engine"]
 
     # LLM overrides
     overrides = pipeline.setdefault("llm_overrides", {})
     for role in ["scout", "researcher", "writer", "de_ai_editor", "director"]:
-        val = form.get(f"model_{role}")
+        val = str(form.get(f"model_{role}", "")).strip()
         if val:
             overrides[role] = val
+        elif role in overrides:
+            del overrides[role]  # 清空 = 使用默认
 
     # WeChat config（凭证只走环境变量，不落配置文件）
     wechat = settings.setdefault("wechat", {})
@@ -1292,8 +1302,14 @@ async def api_update_settings_form(request: Request):
         wechat["author"] = form["wechat_author"]
 
     save_settings(settings)
+
+    # 通知频道 → 写入 .env.local
+    notify_channel = str(form.get("notify_channel", "")).strip()
+    env_local_path = Path(__file__).parent.parent.parent.parent / ".env.local"
+    _update_env_local(env_local_path, "CONTENTPIPE_NOTIFY_CHANNEL", notify_channel)
+
     return HTMLResponse(
-        '<div class="text-green-400 text-sm mt-2">✅ 设置已保存</div>',
+        '<div class="text-green-400 text-sm mt-2">✅ 设置已保存（通知频道需重启生效）</div>',
     )
 
 
