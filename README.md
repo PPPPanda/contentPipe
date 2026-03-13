@@ -535,15 +535,44 @@ OPENCLAW_GATEWAY_URL=http://host.docker.internal:18789
 
 ## 8. API 概览
 
-### 基础
+> 📄 **完整 API 文档**: [docs/API.md](docs/API.md)（63 个端点，含请求/响应示例）
+
+### 系统
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | GET | `/api/health` | 健康检查 |
 | GET | `/api/info` | 插件信息 |
+| GET | `/api/system/status` | 系统全景（Gateway、Run 统计、通知状态） |
+| GET | `/api/system/engines` | 图片引擎及可用状态 |
+| POST | `/api/system/test-llm` | 测试 LLM 连接 |
+| POST | `/api/system/test-notify` | 发送测试通知 |
+| GET | `/api/system/logs` | 查看日志 |
+
+### 配置管理
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| GET | `/api/config` | 读取完整配置 |
+| PATCH | `/api/config` | 部分更新配置 |
+| GET/PUT | `/api/config/models` | 各角色 LLM 模型 |
+| GET/PUT | `/api/config/notify` | 通知频道 |
+| GET/PUT | `/api/config/image-engine` | 图片引擎 |
+| GET/GET/PUT | `/api/config/prompts[/{name}]` | Prompt 管理 |
+
+### Run 管理
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
 | GET | `/api/runs` | 列出 run |
 | POST | `/api/runs` | 创建 run |
+| GET | `/api/runs/{id}` | 查看详情 |
 | POST | `/api/runs/{id}/start` | 启动 pipeline |
+| POST | `/api/runs/{id}/cancel` | 取消执行 |
+| DELETE | `/api/runs/{id}` | 删除 run |
+| POST | `/api/runs/{id}/clone` | 克隆 run |
+| GET | `/api/runs/{id}/timeline` | 执行时间线 |
+| POST | `/api/runs/{id}/auto-approve` | 切换全自动模式 |
 
 ### 审核 / 交互
 
@@ -552,24 +581,33 @@ OPENCLAW_GATEWAY_URL=http://host.docker.internal:18789
 | GET | `/api/runs/{id}/chat/history` | 获取聊天记录 |
 | POST | `/api/runs/{id}/chat` | 与当前节点对话 |
 | POST | `/api/runs/{id}/review` | 审批继续 |
+| POST | `/api/runs/{id}/reject` | 驳回重跑 |
+| POST | `/api/runs/{id}/rollback` | 回退到指定节点 |
 | POST | `/api/runs/{id}/nodes/{node}/rerun` | 重跑节点 |
 
-### Writer / Director 相关
+### 产物 / 图片
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/runs/{id}/article` | 获取当前文章 |
-| POST | `/api/runs/{id}/article` | 保存编辑后的文章 |
-| POST | `/api/runs/{id}/images/upload` | 上传 / 替换图片 |
-| DELETE | `/api/runs/{id}/placements/{pid}` | 删除一个配图位 |
+| GET | `/api/runs/{id}/artifacts` | 列出所有产物文件 |
+| GET/PUT | `/api/runs/{id}/artifacts/{file}` | 读取/修改产物 |
+| GET/PUT | `/api/runs/{id}/visual-plan` | 导演视觉方案 |
+| GET | `/api/runs/{id}/article` | 获取文章 |
+| POST | `/api/runs/{id}/images/upload-cover` | 上传封面 |
+| POST | `/api/runs/{id}/images/upload-placement` | 上传配图 |
+| GET | `/api/runs/{id}/preview/html` | 排版预览 |
+| GET | `/api/runs/{id}/diff` | 产物 diff |
 
-### 预览 / 导出
+### SSE 实时推送
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/api/runs/{id}/preview/html` | 获取排版 HTML |
-| GET | `/api/runs/{id}/images/{image_name}` | 获取图片 |
-| GET | `/sse/{id}` | SSE 事件流 |
+| GET | `/sse/{id}` | HTMX 事件流 |
+| GET | `/api/runs/{id}/events` | JSON SSE（供 Agent 订阅） |
+
+### OpenClaw AI 工具
+
+ContentPipe 注册了 **11 个 AI 工具**，OpenClaw LLM 可直接调用。详见 [docs/API.md #9](docs/API.md#9-openclaw-ai-工具)。
 
 ---
 
