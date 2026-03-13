@@ -25,6 +25,24 @@ TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 templates = Jinja2Templates(directory=str(TEMPLATES_DIR))
 
 
+@router.get("/api/runs/{run_id}/events")
+async def sse_json_endpoint(request: Request, run_id: str):
+    """JSON SSE 端点：推送 Pipeline 事件（供 OpenClaw Agent / 外部客户端订阅）
+
+    每个事件的 data 是 JSON 对象：
+    event: node_complete
+    data: {"run_id":"...","node":"scout","duration_ms":12000}
+    """
+    async def event_generator():
+        try:
+            async for event in event_bus.subscribe(run_id):
+                yield event.to_sse()
+        except asyncio.CancelledError:
+            pass
+
+    return EventSourceResponse(event_generator())
+
+
 @router.get("/sse/{run_id}")
 async def sse_endpoint(request: Request, run_id: str):
     """

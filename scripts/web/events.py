@@ -111,3 +111,23 @@ def emit_review_needed(run_id: str, node: str, review_type: str) -> None:
 
 def emit_run_complete(run_id: str, total_time_ms: int = 0) -> None:
     event_bus.publish_sync(PipelineEvent(type="run_complete", run_id=run_id, data={"status": "completed", "total_time_ms": total_time_ms}))
+
+def emit_chat_message(run_id: str, node: str, role: str, message: str, source: str = "") -> None:
+    event_bus.publish_sync(PipelineEvent(type="chat_message", run_id=run_id, data={
+        "node": node, "role": role, "message": message[:500], "source": source,
+    }))
+
+def emit_approved(run_id: str, node: str, next_node: str = "", source: str = "") -> None:
+    event_bus.publish_sync(PipelineEvent(type="approved", run_id=run_id, data={
+        "node": node, "next": next_node, "source": source,
+    }))
+
+def emit_rejected(run_id: str, node: str, reason: str = "", source: str = "") -> None:
+    event_bus.publish_sync(PipelineEvent(type="rejected", run_id=run_id, data={
+        "node": node, "reason": reason[:300], "source": source,
+    }))
+
+def emit_rolled_back(run_id: str, from_node: str, to_node: str, source: str = "") -> None:
+    event_bus.publish_sync(PipelineEvent(type="rolled_back", run_id=run_id, data={
+        "from_node": from_node, "to_node": to_node, "source": source,
+    }))

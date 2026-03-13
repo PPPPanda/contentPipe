@@ -26,7 +26,11 @@ from web.run_manager import (
     get_run_artifact, load_settings, save_settings,
     PIPELINE_NODES, _load_raw_state, _save_state,
 )
-from web.events import event_bus, emit_node_start, emit_node_complete, emit_run_complete
+from web.events import (
+    event_bus, emit_node_start, emit_node_complete, emit_run_complete,
+    emit_chat_message, emit_approved, emit_rejected, emit_rolled_back,
+    emit_review_needed,
+)
 
 
 def _node_session_key(state: dict, run_id: str, node_id: str, lane: str = "main") -> str:
@@ -614,6 +618,29 @@ async def api_submit_review(request: Request, run_id: str, background_tasks: Bac
 
     _save_state(raw)
 
+    # SSE 事件 + Discord 反向推送
+    current_node = raw.get("current_stage", "")
+    if action in ("approve", "select"):
+        emit_approved(run_id, current_node, source="web")
+        try:
+            from web.notify import notify_discord
+            asyncio.ensure_future(notify_discord(
+                f"✅ **{current_node}** 已在网页端通过",
+                run_id=run_id, node=current_node,
+            ))
+        except Exception:
+            pass
+    elif action == "revise":
+        emit_rejected(run_id, current_node, reason=feedback if action == "revise" else "", source="web")
+        try:
+            from web.notify import notify_discord
+            asyncio.ensure_future(notify_discord(
+                f"🔄 **{current_node}** 被驳回（网页端）\n> {feedback[:200]}",
+                run_id=run_id, node=current_node,
+            ))
+        except Exception:
+            pass
+
     # 恢复 Pipeline 执行
     background_tasks.add_task(_execute_pipeline, run_id)
 
@@ -668,6 +695,7 @@ async def api_chat(request: Request, run_id: str):
     history = get_chat_history(run_id, node_id)
     display_msg = user_msg or "(附图片)"
     save_chat_message(run_id, node_id, "user", display_msg, attachments=attachments, source=source)
+    emit_chat_message(run_id, node_id, "user", display_msg, source=source)
 
     # ── skill-driven 提示：检测 URL / 搜索意图，但不在 Python 里预抓取内容 ──
     import re as _re
@@ -941,8 +969,21 @@ async def api_reject_node(request: Request, run_id: str, background_tasks: Backg
     raw["user_feedback"] = {"action": "revise", "global_note": reason, "source": source}
     _save_state(raw)
 
+    emit_rejected(run_id, node_id, reason=reason, source=source)
+
     # 恢复 Pipeline 执行（带反馈重新执行当前节点）
     background_tasks.add_task(_execute_pipeline, run_id)
+
+    # Discord 反向推送
+    try:
+        from web.notify import notify_discord
+        import asyncio
+        asyncio.ensure_future(notify_discord(
+            f"🔄 **{node_id}** 被驳回（{source}）\n> {reason[:200]}",
+            run_id=run_id, node=node_id,
+        ))
+    except Exception:
+        pass
 
     return {
         "ok": True,
@@ -1039,6 +1080,20 @@ async def api_rollback_node(request: Request, run_id: str):
     if reason:
         raw["_rollback_reason"] = reason
     _save_state(raw)
+
+    emit_rolled_back(run_id, current_node, target_node, source=body.get("source", "api"))
+
+    # Discord 反向推送
+    try:
+        from web.notify import notify_discord
+        import asyncio
+        reason_text = f"\n> {reason[:200]}" if reason else ""
+        asyncio.ensure_future(notify_discord(
+            f"⏪ 已回退: **{current_node}** → **{target_node}**{reason_text}",
+            run_id=run_id, node=target_node,
+        ))
+    except Exception:
+        pass
 
     return {
         "ok": True,
@@ -1836,10 +1891,7 @@ async def _execute_pipeline(run_id: str):
     if str(scripts_dir) not in sys.path:
         sys.path.insert(0, str(scripts_dir))
 
-    from web.events import (
-        emit_node_start, emit_node_complete, emit_node_error,
-        emit_run_complete, emit_review_needed,
-    )
+    from web.events import emit_node_start, emit_node_complete, emit_node_error
     from web.run_manager import _load_raw_state, _save_state, PIPELINE_NODES
 
     # 真实节点函数映射
