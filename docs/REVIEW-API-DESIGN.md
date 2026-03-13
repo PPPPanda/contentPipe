@@ -473,3 +473,308 @@ Web UI 显示:
 - 现有 `POST /api/runs/{run_id}/submit-review` 保留，新 API 是更细粒度的替代
 - 现有 `POST /api/runs/{run_id}/chat` 保留，新 API 增加 `source` 字段
 - 旧通知格式作为 fallback，新通知是增强版
+
+---
+
+## 11. 频道内闭环审核（OpenClaw Agent 桥接模式）
+
+### 11.1 目标
+
+用户**不需要打开网页**，在 Discord/飞书/KOOK 频道内完成全部审核流程：
+
+```
+ContentPipe Pipeline
+  │
+  ▼ 节点完成
+ContentPipe notify → Discord #图文生成 频道
+  │                    │
+  │  ┌─────────────────┤
+  │  │ 📋 富文本通知     │
+  │  │ + 产物摘要       │
+  │  │ + session 元数据  │
+  │  └─────────────────┘
+  │                    │
+  │              用户回复: "标题太长了"
+  │                    │
+  │              OpenClaw Agent 识别 → 这是审核反馈
+  │                    │
+  │              Agent 调用 contentpipe_chat(run_id, "标题太长了")
+  │                    │
+  ◄────────────────────┤ ContentPipe LLM 处理
+  │                    │
+  │              Agent 转发回复: "已缩短为…" + diff
+  │                    │
+  │              用户: "好的，通过"
+  │                    │
+  │              Agent 调用 contentpipe_approve(run_id)
+  │                    │
+  ▼ 下一节点开始执行
+```
+
+### 11.2 OpenClaw Agent 频道指令
+
+在 `#图文生成` 频道中，OpenClaw Agent 需要一段**频道级 system prompt**来引导行为。
+
+#### 方案：频道专属 prompt 文件
+
+创建 `plugins/content-pipeline/prompts/channel-review-guide.md`，在 OpenClaw 的频道配置或 AGENTS.md 中引用。
+
+**核心指令内容：**
+
+```markdown
+## ContentPipe 审核频道行为规则
+
+你是 ContentPipe 审核流程的桥接 Agent。当本频道收到 ContentPipe 的审核通知时：
+
+### 识别审核上下文
+
+当你看到包含以下标记的消息时，进入审核桥接模式：
+- `⏸️` + `等待审核` 关键词
+- `[REVIEW]` 标签
+- `run_id:` 和 `node:` 字段
+
+记住当前的 `run_id` 和 `node`，直到该节点审核完成。
+
+### 处理用户回复
+
+当用户在审核通知之后发消息时：
+
+1. **判断意图**：
+   - 审核反馈/修改意见 → 调用 `contentpipe_chat`
+   - 明确通过（"OK"/"通过"/"可以"/"approve"/"没问题"/"继续"） → 调用 `contentpipe_approve`
+   - 驳回/回退（"不行"/"重做"/"回退到xxx"） → 调用 `contentpipe_reject`
+   - 查看详情（"看一下"/"展示"/"摘要"） → 调用 `contentpipe_review`
+   - 无关消息 → 正常对话，不触发审核操作
+
+2. **转发反馈**：
+   调用 `contentpipe_chat(run_id=当前run_id, message=用户的审核意见)`
+   将返回的 AI 回复 + 产物变更 diff 发送到频道
+
+3. **转发结果格式**：
+   ```
+   💬 **{node} 回复**:
+   {AI 回复内容}
+
+   📝 产物变更:
+   ```diff
+   - 旧内容
+   + 新内容
+   ```
+   ```
+
+4. **通过审核**：
+   当用户表示满意时：
+   - 调用 `contentpipe_approve(run_id=当前run_id)`
+   - 发送确认消息: "✅ {node} 已通过，Pipeline 继续执行 → {next_node}"
+
+5. **多轮对话**：
+   一个节点可能需要多轮修改，保持 run_id 和 node 上下文不变。
+   每轮转发后等待用户下一步指令。
+
+### 通知消息模板
+
+ContentPipe 发送的审核通知格式：
+```
+⏸️ {emoji} {node} 等待审核  [REVIEW]
+run_id: {run_id}
+node: {node}
+session: {session_key}
+
+📋 {node_type} 摘要:
+{摘要内容}
+
+---
+💬 在此频道直接回复审核意见
+✅ 回复 "通过" 继续 Pipeline
+🔗 网页审核: {url}
+```
+```
+
+### 11.3 通知消息格式设计
+
+ContentPipe 的通知需要包含机器可读的元数据，让 OpenClaw Agent 可以解析：
+
+```
+⏸️ 🔍 scout 等待审核  [REVIEW]
+run_id: run_20260313_143000
+node: scout
+session: contentpipe:run_20260313_143000:scout:main
+
+📋 选题摘要:
+  标题: AI Agent 2026: 从工具到同事
+  角度: 技术趋势分析 × 实际落地案例
+  参考文章: 3 篇
+  关键词: AI Agent, 工作流自动化, LLM
+
+> 选题来源：用户输入 "写一篇关于 AI Agent 趋势的文章"
+
+---
+💬 在此频道直接回复审核意见，我会转达给选题 AI
+✅ 回复 "通过" 或 "OK" 继续 Pipeline
+🔗 网页审核: http://localhost:8765/runs/run_xxx/review?node=scout
+```
+
+### 11.4 完整交互示例
+
+```
+[ContentPipe Bot]
+⏸️ 🔍 scout 等待审核  [REVIEW]
+run_id: run_20260313_143000
+node: scout
+
+📋 选题摘要:
+  标题: AI Agent 2026: 从工具到同事的进化之路
+  角度: 技术趋势分析 × 实际落地案例
+  参考: 3 篇文章
+
+💬 直接回复审核意见 | ✅ "通过" 继续
+
+────────────────────────────
+
+[用户]
+标题太长了，而且"进化之路"太俗
+
+────────────────────────────
+
+[OpenClaw Agent]  ← 识别为审核反馈，调用 contentpipe_chat
+
+💬 scout 回复:
+好的，已将标题精简。
+
+📝 变更:
+- 标题: AI Agent 2026: 从工具到同事的进化之路
++ 标题: AI Agent：当同事变成 AI
+
+────────────────────────────
+
+[用户]
+还行，角度改一下，聚焦 Coding Agent
+
+────────────────────────────
+
+[OpenClaw Agent]  ← 继续转发
+
+💬 scout 回复:
+已将角度聚焦到 Coding Agent 领域。
+
+📝 变更:
+- 角度: 技术趋势分析 × 实际落地案例
++ 角度: Coding Agent 工具链深度评测（Cursor/Codex/Claude Code）
+
+────────────────────────────
+
+[用户]
+可以了
+
+────────────────────────────
+
+[OpenClaw Agent]  ← 识别为通过，调用 contentpipe_approve
+
+✅ scout 已通过，Pipeline 继续 → researcher
+📚 researcher 开始执行...
+
+────────────────────────────
+
+（几分钟后）
+
+[ContentPipe Bot]
+⏸️ 📚 researcher 等待审核  [REVIEW]
+run_id: run_20260313_143000
+node: researcher
+...
+```
+
+### 11.5 OpenClaw 配置变更
+
+#### 11.5.1 频道 prompt 注入
+
+在 OpenClaw 的 `openclaw.json` 中为 `#图文生成` 频道添加专属 prompt：
+
+```json
+{
+  "channels": {
+    "discord": {
+      "guilds": {
+        "1465578452923977830": {
+          "channels": {
+            "1480223789626294466": {
+              "allow": true,
+              "requireMention": false,
+              "systemPrompt": "file://plugins/content-pipeline/prompts/channel-review-guide.md"
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+> 如果 OpenClaw 不支持 `systemPrompt` 字段，替代方案：
+> 1. 在 `AGENTS.md` 中添加频道判断规则
+> 2. 或在 `skills/` 中创建一个自动激活的 skill
+
+#### 11.5.2 工具可用性
+
+确保 `contentpipe_*` 工具在主 Agent 的工具列表中可用。
+插件工具通过 `openclaw.plugin.yaml` 自动注册。
+
+### 11.6 状态同步
+
+#### 频道 → Web UI
+
+```
+用户在频道发 "标题改短"
+  → OpenClaw 调用 contentpipe_chat API
+    → API 写入 chat_scout.json（source: "discord"）
+    → API 调用 blank agent 处理
+    → 产物更新 → state.yaml 更新
+    → SSE 事件广播 → Web UI 实时更新聊天和产物面板
+```
+
+#### Web UI → 频道
+
+```
+用户在 Web UI 发审核意见
+  → API 写入 chat_scout.json（source: "web"）
+  → SSE 事件广播
+  → ContentPipe 主动推送消息到频道:
+    "💬 [网页] 用户审核意见: xxx"
+  → OpenClaw Agent 看到但不重复转发（识别 source: web）
+```
+
+### 11.7 边界情况处理
+
+| 场景 | Agent 行为 |
+|------|-----------|
+| 用户在审核期间聊无关话题 | Agent 正常回复，不触发审核 |
+| 多个 Run 同时等待审核 | Agent 按最新通知的 run_id 处理；用户可指定 run_id |
+| 用户在 Web UI 已 approve | Agent 收到 SSE → 通知频道 "✅ {node} 已在网页端通过" |
+| 审核超时（Pipeline stall） | Agent 定期检查 contentpipe_status，提醒用户 |
+| 用户说"看一下详情" | Agent 调用 contentpipe_review 获取完整产物 |
+| 用户说"回退到 writer" | Agent 调用 contentpipe_rollback(target_node="writer") |
+
+### 11.8 实施补充
+
+在 Phase 1-4 基础上追加：
+
+#### Phase 1.5: 通知格式升级
+
+- [ ] `notify_review_needed()` 输出包含 `[REVIEW]` 标记 + 结构化字段
+- [ ] 实现 `_build_node_summary()` 为每个节点生成人类可读摘要
+- [ ] 通知末尾加操作提示（直接回复/通过/网页链接）
+
+#### Phase 4.5: 频道 prompt + Agent 桥接
+
+- [ ] 创建 `prompts/channel-review-guide.md`
+- [ ] 配置 OpenClaw `#图文生成` 频道的 systemPrompt
+- [ ] 或写入 `AGENTS.md` 的频道行为规则
+- [ ] contentpipe_chat 返回值包含 diff
+- [ ] contentpipe_approve 返回下一节点信息
+- [ ] Agent 转发时格式化 diff 为 Discord 代码块
+
+#### Phase 6: Web → 频道反向推送
+
+- [ ] 当 Web UI 操作时，ContentPipe 推送消息到频道
+- [ ] Agent 识别 `source: "web"` 消息，不重复转发
+- [ ] 双向同步完成闭环
