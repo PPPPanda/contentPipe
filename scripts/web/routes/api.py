@@ -1796,11 +1796,10 @@ async def _execute_pipeline(run_id: str):
                     state["_node_done"] = True
                     _save_state(state)
                     emit_review_needed(run_id, node_id, node_id)
-                    # Discord 通知
+                    # Discord 通知（含结构化产物摘要）
                     try:
                         from web.notify import notify_review_needed as _discord_notify
-                        title = state.get("topic", {}).get("title", "")
-                        await _discord_notify(run_id, node_id, title[:200])
+                        await _discord_notify(run_id, node_id, state=state)
                     except Exception:
                         pass
                     return  # 暂停，等用户 approve
