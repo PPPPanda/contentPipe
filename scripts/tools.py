@@ -31,12 +31,31 @@ logger = get_logger(__name__)
 CONFIG_DIR = Path(__file__).parent.parent / "config"
 
 
+def _deep_merge(base: dict, override: dict) -> dict:
+    """递归合并字典，override 覆盖 base"""
+    result = base.copy()
+    for k, v in override.items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge(result[k], v)
+        else:
+            result[k] = v
+    return result
+
+
 def load_pipeline_config() -> dict:
-    """加载 pipeline.yaml 配置"""
+    """加载 pipeline.yaml + pipeline.local.yaml（本地覆盖）"""
+    config = {}
     config_path = CONFIG_DIR / "pipeline.yaml"
     if config_path.exists():
-        return yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    return {}
+        config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+
+    # 本地覆盖（不提交到 git）
+    local_path = CONFIG_DIR / "pipeline.local.yaml"
+    if local_path.exists():
+        local = yaml.safe_load(local_path.read_text(encoding="utf-8")) or {}
+        config = _deep_merge(config, local)
+
+    return config
 
 
 # ── LLM 调用 ─────────────────────────────────────────────────

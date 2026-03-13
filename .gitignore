@@ -34,4 +34,5 @@ settings.local.yaml
 dist/
 build/
 config/.setup_done
+config/pipeline.local.yaml
 .state.lock

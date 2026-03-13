@@ -1,30 +1,25 @@
 # ContentPipe Pipeline 配置
-# LLM 调用模式: direct（直接调 API）或 gateway（通过 OpenClaw 代理）
+# 个性化覆盖请创建 config/pipeline.local.yaml（不会被提交）
 
 pipeline:
   # 默认平台
   default_platform: "wechat"
 
-  # LLM 调用模式: direct | gateway
+  # LLM 调用模式: direct（直接调 API）或 gateway（通过 OpenClaw 代理）
   llm_mode: "gateway"
 
-  # 默认模型
-  default_llm: "dashscope/qwen3.5-plus"
+  # 默认模型（首次运行向导会自动检测可用模型）
+  default_llm: ""
 
-  # gateway 地址（llm_mode=gateway 时使用）
-  gateway_url: "http://localhost:18789"
+  # gateway 地址（通常从 OPENCLAW_GATEWAY_URL 环境变量读取）
+  gateway_url: ""
 
-  # blank-agent 执行平面（用于低污染文件产物生成）
+  # blank-agent ID（通常由 install-agent 自动创建）
   gateway_agent_id: "contentpipe-blank"
 
-  # 各角色模型覆盖
-  llm_overrides:
-    scout: "anthropic-sonnet/claude-sonnet-4-6"
-    researcher: "anthropic-sonnet/claude-sonnet-4-6"
-    writer: "openai-codex/gpt-5.4"
-    de_ai_editor: "anthropic-sonnet/claude-sonnet-4-6"
-    director: "anthropic/claude-opus-4-6"
-    director_refine: "dashscope/qwen3.5-plus"
+  # 各角色模型覆盖（留空 = 使用 default_llm）
+  # 首次运行向导或设置页面会帮你配置
+  llm_overrides: {}
 
 # Scout 配置
 scout:
@@ -33,14 +28,8 @@ scout:
     - "科技"
     - "互联网"
     - "产品"
-    - "Agent"
   suggestions_count: 5
 
 # 微信公众号发布配置
 wechat:
-  author: "Mister Panda"
-
-# 账号配置（兼容旧字段，待移除）
-accounts:
-  wechat:
-    author: "Mister Panda"
+  author: ""

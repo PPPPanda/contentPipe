@@ -87,7 +87,7 @@ async def setup_wizard(request: Request):
     pipeline = settings.get("pipeline", {})
     return templates.TemplateResponse("setup.html", {
         "request": request,
-        "gateway_url": pipeline.get("gateway_url", "http://localhost:18789"),
+        "gateway_url": pipeline.get("gateway_url", "") or os.environ.get("OPENCLAW_GATEWAY_URL", ""),
         "default_model": pipeline.get("default_llm", "dashscope/qwen3.5-plus"),
         "notify_channel": os.environ.get("CONTENTPIPE_NOTIFY_CHANNEL", ""),
         "port": os.environ.get("CONTENTPIPE_PORT", "8765"),

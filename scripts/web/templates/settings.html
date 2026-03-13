@@ -21,7 +21,8 @@
             <div class="flex items-center gap-4">
                 <label class="w-28 text-sm text-slate-300">Gateway URL</label>
                 <input type="text" name="gateway_url"
-                       value="{{ pipeline.get('gateway_url', 'http://localhost:18789') }}"
+                       value="{{ pipeline.get('gateway_url', '') }}"
+                       placeholder="http://localhost:18789"
                        class="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm focus:border-sky-500 focus:outline-none"
                        id="settings-gateway-url">
                 <button type="button" onclick="testGatewaySettings()"
