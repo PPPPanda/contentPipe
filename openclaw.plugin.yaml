@@ -3,7 +3,7 @@
 
 id: content-pipeline
 name: ContentPipe
-version: 0.7.0
+version: 0.8.1
 description: "AI 图文内容生产线：选题→调研→写作→配图→排版→发布，每步可交互审核。"
 emoji: 📝
 

@@ -31,7 +31,7 @@ from web.routes.sse import router as sse_router
 app = FastAPI(
     title="ContentPipe Console",
     description="图文内容 Pipeline 主控台",
-    version="0.7.0",
+    version="0.8.1",
 )
 app.add_middleware(AuthMiddleware)
 

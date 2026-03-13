@@ -338,7 +338,7 @@ async def api_health():
     return {
         "status": "healthy",
         "plugin": "content-pipeline",
-        "version": "0.7.0",
+        "version": "0.8.1",
         "total_runs": len(runs),
         "active_runs": len(active),
     }
@@ -350,7 +350,7 @@ async def api_plugin_info():
     return {
         "id": "content-pipeline",
         "name": "ContentPipe",
-        "version": "0.7.0",
+        "version": "0.8.1",
         "description": "AI 图文内容生产线",
         "web_ui": True,
         "discord_notify": True,
