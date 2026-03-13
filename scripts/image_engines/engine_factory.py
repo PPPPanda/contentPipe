@@ -91,9 +91,19 @@ def _auto_select_engine() -> ImageEngine:
     """
     自动选择可用引擎
 
-    优先级: Pollinations(免费) → DALL-E 3 → DashScope → 浏览器(即梦)
+    优先级: DALL-E 3（质量最高） → DashScope → Pollinations（免费 fallback）
     """
-    # 优先级 1: Pollinations（永远可用）
+    import os
+
+    # 优先级 1: DALL-E 3（需要 OPENAI_API_KEY）
+    if os.environ.get("OPENAI_API_KEY", "").strip():
+        return DallE3Engine()
+
+    # 优先级 2: DashScope（需要 DASHSCOPE_API_KEY）
+    if os.environ.get("DASHSCOPE_API_KEY", "").strip():
+        return DashScopeEngine()
+
+    # 优先级 3: Pollinations（免费，无需 key，但不稳定）
     return PollinationsEngine()
 
 
