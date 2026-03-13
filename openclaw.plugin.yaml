@@ -131,6 +131,65 @@ tools:
         description: "回退原因"
         required: false
 
+  - name: contentpipe_config
+    description: "读取或修改项目配置（模型、通知频道、图片引擎等）"
+    parameters:
+      action:
+        type: string
+        required: true
+        description: "get（读取）或 set（修改）"
+      key:
+        type: string
+        description: "配置项: models/notify/image_engine/prompts/all"
+        default: all
+      value:
+        type: object
+        description: "set 时的新值（JSON 对象）"
+        required: false
+
+  - name: contentpipe_artifacts
+    description: "读取或修改 run 产物文件（文章、选题、配图方案等）"
+    parameters:
+      run_id:
+        type: string
+        required: true
+      action:
+        type: string
+        required: true
+        description: "list/get/put/upload_cover/upload_image"
+      filename:
+        type: string
+        description: "产物文件名（get/put 时必填）"
+        required: false
+      content:
+        type: string
+        description: "put 时的文件内容"
+        required: false
+      image:
+        type: string
+        description: "upload 时的 base64 图片数据"
+        required: false
+      placement_id:
+        type: string
+        description: "upload_image 时的配图 ID (img_001 等)"
+        required: false
+
+  - name: contentpipe_system
+    description: "系统状态、诊断和测试"
+    parameters:
+      action:
+        type: string
+        required: true
+        description: "status/engines/test_llm/test_notify/logs"
+      model:
+        type: string
+        description: "test_llm 时指定模型"
+        required: false
+      limit:
+        type: number
+        description: "logs 返回行数"
+        default: 20
+
 # 依赖
 dependencies:
   python:
