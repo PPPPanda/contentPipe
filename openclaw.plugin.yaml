@@ -105,6 +105,32 @@ tools:
         description: "指定节点（留空用当前节点）"
         required: false
 
+  - name: contentpipe_reject
+    description: "驳回当前节点，带反馈重新执行"
+    parameters:
+      run_id:
+        type: string
+        required: true
+      reason:
+        type: string
+        required: true
+        description: "驳回原因/修改要求"
+
+  - name: contentpipe_rollback
+    description: "回退到指定节点重新执行（丢弃当前节点及下游产物）"
+    parameters:
+      run_id:
+        type: string
+        required: true
+      target_node:
+        type: string
+        required: true
+        description: "回退目标节点 (scout/researcher/writer/director/formatter)"
+      reason:
+        type: string
+        description: "回退原因"
+        required: false
+
 # 依赖
 dependencies:
   python:

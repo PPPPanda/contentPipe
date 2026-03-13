@@ -651,6 +651,7 @@ async def api_chat(request: Request, run_id: str):
     body = await request.json()
     user_msg = body.get("message", "").strip()
     node_id = body.get("node", "")
+    source = body.get("source", "web")  # web | discord | openclaw
     attachments = body.get("attachments", []) or []
     if not user_msg and not attachments:
         raise HTTPException(status_code=400, detail="Empty message")
@@ -666,7 +667,7 @@ async def api_chat(request: Request, run_id: str):
 
     history = get_chat_history(run_id, node_id)
     display_msg = user_msg or "(附图片)"
-    save_chat_message(run_id, node_id, "user", display_msg, attachments=attachments)
+    save_chat_message(run_id, node_id, "user", display_msg, attachments=attachments, source=source)
 
     # ── skill-driven 提示：检测 URL / 搜索意图，但不在 Python 里预抓取内容 ──
     import re as _re
@@ -915,6 +916,139 @@ async def api_rollback_image_gen_to_director(run_id: str):
         "redirect_to": f"/runs/{run_id}/review?node=director",
     }
 
+
+# ── JSON API：reject / rollback（供 OpenClaw 工具调用）─────────
+
+@router.post("/runs/{run_id}/reject")
+async def api_reject_node(request: Request, run_id: str, background_tasks: BackgroundTasks):
+    """驳回当前节点，带反馈重新执行。
+
+    JSON body: {"reason": "...", "source": "openclaw"}
+    """
+    body = await request.json()
+    reason = body.get("reason", "")
+    source = body.get("source", "api")
+
+    raw = _load_raw_state(run_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    if raw.get("status") != "review":
+        raise HTTPException(status_code=400, detail=f"Run not in review status (current: {raw.get('status')})")
+
+    node_id = raw.get("current_stage", "")
+    raw["review_action"] = "revise"
+    raw["user_feedback"] = {"action": "revise", "global_note": reason, "source": source}
+    _save_state(raw)
+
+    # 恢复 Pipeline 执行（带反馈重新执行当前节点）
+    background_tasks.add_task(_execute_pipeline, run_id)
+
+    return {
+        "ok": True,
+        "node": node_id,
+        "action": "revise",
+        "message": f"{node_id} rejected with feedback, re-executing",
+    }
+
+
+@router.post("/runs/{run_id}/rollback")
+async def api_rollback_node(request: Request, run_id: str):
+    """回退到指定节点。
+
+    JSON body: {"target_node": "writer", "reason": "...", "source": "openclaw"}
+    """
+    body = await request.json()
+    target_node = body.get("target_node", "")
+    reason = body.get("reason", "")
+
+    raw = _load_raw_state(run_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    current_node = raw.get("current_stage", "")
+    interactive_nodes = ["scout", "researcher", "writer", "director", "formatter"]
+
+    if target_node not in interactive_nodes:
+        raise HTTPException(status_code=400, detail=f"Invalid target node: {target_node}")
+
+    if target_node == current_node:
+        raise HTTPException(status_code=400, detail=f"Already at {target_node}")
+
+    # 确保 target 在 current 之前
+    cur_idx = interactive_nodes.index(current_node) if current_node in interactive_nodes else len(interactive_nodes)
+    tgt_idx = interactive_nodes.index(target_node)
+    if tgt_idx >= cur_idx:
+        raise HTTPException(status_code=400, detail=f"Cannot rollback forward: {current_node} → {target_node}")
+
+    # 清理从 target+1 到 current 的所有节点
+    nodes_to_clear = interactive_nodes[tgt_idx + 1: cur_idx + 1]
+    run_dir = Path(__file__).parent.parent.parent / "output" / "runs" / run_id
+
+    state_cleanup = {
+        "scout": ["topic", "writer_brief", "handoff_to_researcher", "reference_articles",
+                   "user_requirements", "reference_index", "link_usage_policy", "scout_process_summary"],
+        "researcher": ["research", "writer_packet", "verification_results",
+                        "evidence_backed_insights", "open_issues"],
+        "writer": ["article", "article_edited", "writer_context"],
+        "director": ["visual_plan", "image_candidates", "selected_images",
+                      "generated_images", "generated_cover"],
+        "formatter": ["formatted_html"],
+    }
+    artifact_cleanup = {
+        "scout": ["topic.yaml", "scout_raw.txt"],
+        "researcher": ["research.yaml", "researcher_raw.txt"],
+        "writer": ["writer_context.yaml", "article_draft.md", "article_edited.md"],
+        "director": ["director_raw.txt", "visual_plan.json", "director_refine_raw.txt",
+                      "image_candidates.json", "generated_images.json", "generated_cover.json"],
+        "formatter": ["formatted.html", "content_body.html"],
+    }
+
+    cleared: list[str] = []
+    session_gen = raw.get("_session_gen") if isinstance(raw.get("_session_gen"), dict) else {}
+    for node in nodes_to_clear:
+        # 清理 state 字段
+        for key in state_cleanup.get(node, []):
+            raw.pop(key, None)
+        # 清理文件
+        for fname in artifact_cleanup.get(node, []):
+            p = run_dir / fname
+            if p.exists():
+                p.unlink()
+        # 清理 chat 文件
+        chat_file = run_dir / f"chat_{node}.json"
+        if chat_file.exists():
+            chat_file.unlink()
+        # 提升 session generation
+        session_gen[node] = int(session_gen.get(node, 0) or 0) + 1
+        cleared.append(node)
+
+    # director → 清理图片目录
+    if "director" in nodes_to_clear:
+        images_dir = run_dir / "images"
+        if images_dir.exists():
+            import shutil
+            shutil.rmtree(images_dir, ignore_errors=True)
+
+    raw["_session_gen"] = session_gen
+    raw["current_stage"] = target_node
+    raw["status"] = "review"
+    raw["_node_done"] = True
+    raw["review_action"] = ""
+    raw.pop("user_feedback", None)
+    if reason:
+        raw["_rollback_reason"] = reason
+    _save_state(raw)
+
+    return {
+        "ok": True,
+        "rolled_back_to": target_node,
+        "cleared_nodes": cleared,
+        "message": f"Rolled back to {target_node}, cleared: {', '.join(cleared)}",
+    }
+
+
+# ── 聊天 prompt 构建 ─────────────────────────────────────────
 
 def _build_node_chat_prompt(node_id: str, state: dict) -> str:
     """为每个节点生成专属聊天 system prompt（含执行 context）"""

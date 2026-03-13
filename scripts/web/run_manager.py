@@ -121,11 +121,14 @@ def get_chat_history_visible(run_id: str, node_id: str = "") -> list[dict]:
 
 def save_chat_message(run_id: str, node_id: str, role: str, content: str,
                       tag: str = "", internal: bool = False,
-                      attachments: list[dict[str, Any]] | None = None):
+                      attachments: list[dict[str, Any]] | None = None,
+                      source: str = ""):
     """追加一条聊天消息到节点 session
 
     internal=True 的消息不会在前端审核对话框中显示，
     但会作为 LLM chat_history 传递（节点执行上下文、系统提示等）。
+
+    source: 消息来源标记 ("web" | "discord" | "openclaw" | "system" | "")
     """
     suffix = f"_{node_id}" if node_id else ""
     chat_file = OUTPUT_DIR / "runs" / run_id / f"chat{suffix}.json"
@@ -143,6 +146,8 @@ def save_chat_message(run_id: str, node_id: str, role: str, content: str,
         msg["internal"] = True
     if attachments:
         msg["attachments"] = attachments
+    if source:
+        msg["source"] = source
     history.append(msg)
     chat_file.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
 
