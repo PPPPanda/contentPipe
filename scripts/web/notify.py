@@ -108,12 +108,19 @@ async def notify_node_complete(run_id: str, node: str, title: str = "", summary:
 
 
 async def notify_review_needed(run_id: str, node: str, output_summary: str = ""):
-    """需要人工审核通知"""
+    """需要人工审核通知（内嵌审核指引，agent 自动识别进入桥接模式）"""
     emoji = NODE_EMOJI.get(node, "📌")
-    msg = f"⏸️ **{emoji} {node} 等待审核**"
+    lines = [
+        f"⏸️ **{emoji} {node} 等待审核**  `[REVIEW]`",
+        f"`run_id: {run_id}` · `node: {node}`",
+    ]
     if output_summary:
-        msg += f"\n{output_summary[:300]}"
-    msg += f"\n\n👉 {_get_public_base_url()}/runs/{run_id}/review?node={node}"
+        lines.append(f"> {output_summary[:300]}")
+    lines.append("")
+    lines.append(f"💬 直接回复审核意见 → `contentpipe_chat({run_id})`")
+    lines.append(f"✅ 说「通过/OK」→ `contentpipe_approve({run_id})`")
+    lines.append(f"🔗 网页审核: {_get_public_base_url()}/runs/{run_id}/review?node={node}")
+    msg = "\n".join(lines)
     await notify_discord(msg, run_id=run_id, node=node, buttons=True)
 
 
