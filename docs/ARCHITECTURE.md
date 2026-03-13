@@ -205,6 +205,10 @@ contentpipe:{run_id}:formatter:main
   - `writer-structure.md` 对应的结构 helper 每次 fresh session 运行
   - 结构 helper 负责把正式正文落到 `article_edited.md`
   - Python 再读回正文、写 `.prev`、更新 `state.article_edited`、刷新左侧 UI
+- **Publisher**
+  - Web pipeline 现在执行真实 `publisher_node`，不再只是 stub completed
+  - 发布后会写入 `publish_result.json` 与 `state.publish_result`
+  - 成功显示 `draft_saved`；失败显示 `failed`；未配置凭证时显示 `local_only`
 - 旧的 `_sync_chat_to_state()` 二次 YAML 同步链路已经退役，不再作为主路径
 - 旧的 `writer-extractor.md` 已移入 `prompts/deprecated/`，不再挂主链路
 

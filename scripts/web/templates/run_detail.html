@@ -234,8 +234,24 @@
 </div>
 {% endif %}
 
-<!-- 快捷操作 -->
-{% if run.current_stage == 'publisher' and not wechat_publish_ready %}
+<!-- Publisher 结果 -->
+{% if run.publish_result %}
+{% set pr = run.publish_result %}
+<div class="card p-4 mt-4 {% if pr.status == 'draft_saved' %}border-green-700/30 bg-green-900/10{% elif pr.status == 'failed' %}border-red-700/30 bg-red-900/10{% else %}border-amber-700/30 bg-amber-900/10{% endif %}">
+    <h3 class="text-sm font-semibold mb-2 {% if pr.status == 'draft_saved' %}text-green-300{% elif pr.status == 'failed' %}text-red-300{% else %}text-amber-300{% endif %}">
+        {% if pr.status == 'draft_saved' %}✅ 微信草稿已创建{% elif pr.status == 'failed' %}❌ 发布失败{% else %}📌 仅本地保存{% endif %}
+    </h3>
+    <div class="text-xs leading-relaxed space-y-1 {% if pr.status == 'draft_saved' %}text-green-100/90{% elif pr.status == 'failed' %}text-red-100/90{% else %}text-amber-100/90{% endif %}">
+        <p>平台：<code>{{ pr.platform or 'wechat' }}</code></p>
+        <p>状态：<code>{{ pr.status or 'unknown' }}</code></p>
+        {% if pr.media_id %}<p>草稿 Media ID：<code>{{ pr.media_id }}</code></p>{% endif %}
+        {% if pr.thumb_media_id %}<p>封面 Media ID：<code>{{ pr.thumb_media_id }}</code></p>{% endif %}
+        {% if pr.cover_source %}<p>封面来源：<code>{{ pr.cover_source }}</code></p>{% endif %}
+        {% if pr.note %}<p>{{ pr.note }}</p>{% endif %}
+        {% if pr.error %}<p>{{ pr.error }}</p>{% endif %}
+    </div>
+</div>
+{% elif run.current_stage == 'publisher' and not wechat_publish_ready %}
 <div class="card p-4 mt-4 border-amber-700/30 bg-amber-900/10">
     <h3 class="text-amber-300 text-sm font-semibold mb-2">📌 Publisher 当前不会真正发到公众号</h3>
     <p class="text-xs text-amber-100/90 leading-relaxed">
@@ -244,6 +260,8 @@
     </p>
 </div>
 {% endif %}
+
+<!-- 快捷操作 -->
 {% if run.status == 'completed' %}
 <div class="mt-4 flex gap-3">
     <a href="/runs/{{ run.run_id }}/preview"

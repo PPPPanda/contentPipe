@@ -1100,7 +1100,7 @@ def publisher_node(state: ContentState) -> ContentState:
 
     state["publish_result"] = result
     state["current_stage"] = "publisher"
-    state["status"] = "completed"
+    state["status"] = "failed" if result.get("status") == "failed" else "completed"
     _save_artifact(run_id, "publish_result.json", json.dumps(result, ensure_ascii=False, indent=2))
     _save_state(state)
 

@@ -1925,7 +1925,7 @@ async def _execute_pipeline(run_id: str):
     from nodes import (
         scout_node, researcher_node, writer_node,
         director_node,
-        image_gen_node, formatter_node,
+        image_gen_node, formatter_node, publisher_node,
     )
 
     NODE_FUNCTIONS = {
@@ -1935,6 +1935,7 @@ async def _execute_pipeline(run_id: str):
         "director": director_node,
         "image_gen": image_gen_node,
         "formatter": formatter_node,
+        "publisher": publisher_node,
     }
 
     # 可交互节点 — 执行完后暂停让用户讨论
@@ -1945,7 +1946,7 @@ async def _execute_pipeline(run_id: str):
     }
 
     # 跳过节点
-    STUB_NODES = {"publisher"}
+    STUB_NODES = set()
 
     state = _load_raw_state(run_id)
     if not state:
@@ -1992,6 +1993,16 @@ async def _execute_pipeline(run_id: str):
                     summary = f"{ok}/{len(imgs)} 张"
                 elif node_id == "formatter":
                     summary = f"{len(state.get('formatted_html', ''))} 字符"
+                elif node_id == "publisher":
+                    pr = state.get("publish_result", {}) if isinstance(state.get("publish_result"), dict) else {}
+                    summary = pr.get("status", "?")
+
+                if node_id == "publisher" and state.get("status") == "failed":
+                    err = (state.get("publish_result", {}) or {}).get("error", "publisher failed")
+                    emit_node_error(run_id, node_id, str(err)[:200])
+                    _save_state(state)
+                    return
+
                 emit_node_complete(run_id, node_id, duration_ms=duration_ms, summary=summary)
             except Exception as e:
                 emit_node_error(run_id, node_id, str(e)[:200])
@@ -2029,13 +2040,14 @@ async def _execute_pipeline(run_id: str):
         # ── 未知节点 ──
         emit_node_complete(run_id, node_id, duration_ms=0, summary="skip")
 
-    state["status"] = "completed"
-    _save_state(state)
-    emit_run_complete(run_id)
-    # Discord 完成通知
-    try:
-        from web.notify import notify_run_complete as _discord_complete
-        title = state.get("topic", {}).get("title", "")
-        await _discord_complete(run_id, title)
-    except Exception:
-        pass
+    if state.get("status") != "failed":
+        state["status"] = "completed"
+        _save_state(state)
+        emit_run_complete(run_id)
+        # Discord 完成通知
+        try:
+            from web.notify import notify_run_complete as _discord_complete
+            title = state.get("topic", {}).get("title", "")
+            await _discord_complete(run_id, title)
+        except Exception:
+            pass
