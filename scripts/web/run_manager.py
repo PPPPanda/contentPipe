@@ -454,10 +454,37 @@ def load_settings() -> dict:
 
 def save_settings(settings: dict) -> None:
     config_path = CONFIG_DIR / "pipeline.yaml"
-    config_path.write_text(
-        yaml.dump(settings, allow_unicode=True, default_flow_style=False),
-        encoding="utf-8",
-    )
+    # 使用 ruamel.yaml 保留注释和格式；fallback 到 PyYAML
+    try:
+        from ruamel.yaml import YAML as RYAML
+        ry = RYAML()
+        ry.preserve_quotes = True
+        if config_path.exists():
+            existing = ry.load(config_path.read_text(encoding="utf-8"))
+            if existing is None:
+                existing = {}
+            _deep_merge(existing, settings)
+            target = existing
+        else:
+            target = settings
+        import io
+        stream = io.StringIO()
+        ry.dump(target, stream)
+        config_path.write_text(stream.getvalue(), encoding="utf-8")
+    except ImportError:
+        config_path.write_text(
+            yaml.dump(settings, allow_unicode=True, default_flow_style=False),
+            encoding="utf-8",
+        )
+
+
+def _deep_merge(base: dict, override: dict) -> None:
+    """递归合并 override 到 base，只更新有变化的字段。"""
+    for k, v in override.items():
+        if k in base and isinstance(base[k], dict) and isinstance(v, dict):
+            _deep_merge(base[k], v)
+        else:
+            base[k] = v
 
 
 # ── 内部函数 ──────────────────────────────────────────────────

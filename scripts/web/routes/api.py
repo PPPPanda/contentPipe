@@ -1423,13 +1423,34 @@ async def api_setup_discover(gateway_url: str = "http://localhost:18789"):
     except Exception:
         pass
 
-    # 如果 CLI 失败，fallback 到基本列表
+    # 如果 CLI 失败，fallback: 尝试 Gateway REST API
+    if not models:
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.get(f"{gateway_url}/api/models", headers=headers)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    raw_models = data.get("models", data) if isinstance(data, dict) else data
+                    if isinstance(raw_models, list):
+                        for m in raw_models:
+                            mid = m.get("key") or m.get("model") or m.get("id") or m.get("name", "")
+                            if mid:
+                                name = m.get("name", mid)
+                                ctx = m.get("contextWindow", 0)
+                                ctx_label = f" ({ctx // 1024}k)" if ctx > 0 else ""
+                                models.append({"id": mid, "label": f"✅ {name}{ctx_label}"})
+        except Exception:
+            pass
+
+    # 最终 fallback: 常用模型列表
     if not models:
         models = [
             {"id": "dashscope/qwen3.5-plus", "label": "dashscope/qwen3.5-plus"},
-            {"id": "anthropic/claude-sonnet-4-6", "label": "anthropic/claude-sonnet-4-6"},
+            {"id": "anthropic-sonnet/claude-sonnet-4-6", "label": "anthropic-sonnet/claude-sonnet-4-6"},
             {"id": "anthropic/claude-opus-4-6", "label": "anthropic/claude-opus-4-6"},
             {"id": "openai-codex/gpt-5.4", "label": "openai-codex/gpt-5.4"},
+            {"id": "dashscope/glm-5", "label": "dashscope/glm-5"},
+            {"id": "dashscope/kimi-k2.5", "label": "dashscope/kimi-k2.5"},
         ]
 
     # 频道列表 — 从 openclaw.json 读可用 channel providers，

@@ -159,10 +159,13 @@
                 <label class="block text-sm text-slate-300 mb-1.5">📢 通知频道</label>
                 <p class="text-xs text-slate-500 mb-2">Pipeline 事件（等待审核、完成、失败）会推送到此频道</p>
                 <select name="notify_channel" id="notify-channel"
+                        onchange="if(this.value==='__manual__'){document.getElementById('notify-manual').classList.remove('hidden');this.name='';} else {document.getElementById('notify-manual').classList.add('hidden');this.name='notify_channel';}"
                         class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-cyan-500 focus:outline-none">
                     <option value="">不启用通知</option>
                 </select>
-                <p class="text-xs text-slate-500 mt-1" id="notify-hint">连接 Gateway 后自动加载可用频道</p>
+                <input type="text" id="notify-manual" name="" placeholder="手动输入频道 ID（如 Discord 频道 ID）"
+                       class="hidden w-full mt-2 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm placeholder-slate-500 focus:border-cyan-500 focus:outline-none">
+                <p class="text-xs text-slate-500 mt-1" id="notify-hint">连接 Gateway 后自动加载可用频道；也可手动输入频道 ID</p>
             </div>
 
             <div class="flex justify-between mt-6">
@@ -369,18 +372,25 @@ async function loadModelsAndChannels() {
         }
 
         // 填充频道下拉框
-        if (data.channels && data.channels.length > 0) {
+        {
             const channelSelect = document.getElementById('notify-channel');
             channelSelect.innerHTML = '<option value="">不启用通知</option>';
-            data.channels.forEach(ch => {
-                const opt = document.createElement('option');
-                opt.value = ch.id;
-                opt.textContent = ch.label;
-                if (ch.id === '{{ notify_channel }}') opt.selected = true;
-                channelSelect.appendChild(opt);
-            });
-            document.getElementById('notify-hint').textContent =
-                `发现 ${data.channels.length} 个可用频道`;
+            if (data.channels && data.channels.length > 0) {
+                data.channels.forEach(ch => {
+                    const opt = document.createElement('option');
+                    opt.value = ch.id;
+                    opt.textContent = ch.label;
+                    if (ch.id === '{{ notify_channel }}') opt.selected = true;
+                    channelSelect.appendChild(opt);
+                });
+                document.getElementById('notify-hint').textContent =
+                    `发现 ${data.channels.length} 个可用频道；也可手动输入频道 ID`;
+            }
+            // 始终加"手动输入"选项
+            const manualOpt = document.createElement('option');
+            manualOpt.value = '__manual__';
+            manualOpt.textContent = '✏️ 手动输入频道 ID...';
+            channelSelect.appendChild(manualOpt);
         }
 
         modelsLoaded = true;
@@ -399,6 +409,11 @@ async function saveSetup() {
     const payload = {};
     for (const [k, v] of formData.entries()) {
         payload[k] = v;
+    }
+    // 手动输入的频道 ID 优先
+    const manualChannel = document.getElementById('notify-manual');
+    if (manualChannel && manualChannel.value.trim()) {
+        payload['notify_channel'] = manualChannel.value.trim();
     }
 
     try {
