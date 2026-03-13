@@ -460,16 +460,111 @@ const runId = '{{ run.run_id }}';
 const nodeId = '{{ stage }}';
 const chatBox = document.getElementById('chat-messages');
 const chatInput = document.getElementById('chat-input');
+const renderedMessageKeys = new Set();
+let syncInFlight = false;
 
-(async () => {
+function messageKey(role, content, attachments = []) {
+    const attKey = (attachments || []).map(att => `${att.type || 'file'}:${att.filename || ''}:${att.path || ''}`).join('|');
+    return `${role}::${content || ''}::${attKey}`;
+}
+
+async function loadChatHistory() {
     try {
         const resp = await fetch(`/api/runs/${runId}/chat/history?node=${nodeId}`);
         const msgs = await resp.json();
-        for (const msg of msgs) appendMsg(msg.role, msg.content, msg.attachments || []);
-    } catch(e) {}
-})();
+        for (const msg of msgs) {
+            appendMsg(msg.role, msg.content, msg.attachments || []);
+        }
+    } catch (e) {}
+}
 
-function appendMsg(role, content, attachments = []) {
+async function refreshLeftColumn() {
+    const leftCol = document.getElementById('review-left-column');
+    if (!leftCol) return false;
+    try {
+        const r = await fetch(`/runs/${runId}/review?node=${nodeId}`);
+        if (!r.ok) return false;
+        const html = await r.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        const nextLeft = doc.getElementById('review-left-column');
+        if (!nextLeft) return false;
+        leftCol.innerHTML = nextLeft.innerHTML;
+        leftCol.style.transition = 'outline 0.3s';
+        leftCol.style.outline = '2px solid #22c55e';
+        setTimeout(() => { leftCol.style.outline = 'none'; }, 1500);
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+async function refreshOutputCards() {
+    const refreshed = await refreshLeftColumn();
+    if (refreshed) return;
+    const outputEl = document.getElementById('node-output-cards');
+    if (!outputEl) return;
+    try {
+        const r = await fetch(`/api/runs/${runId}/nodes/${nodeId}/output`);
+        if (r.ok) {
+            outputEl.innerHTML = await r.text();
+            outputEl.style.transition = 'outline 0.3s';
+            outputEl.style.outline = '2px solid #22c55e';
+            setTimeout(() => { outputEl.style.outline = 'none'; }, 1500);
+        }
+    } catch (_) {}
+}
+
+async function refreshArticle() {
+    const articleEl = document.getElementById('article-display');
+    if (!articleEl) return;
+    try {
+        const r = await fetch(`/api/runs/${runId}/article`);
+        if (r.ok) {
+            const d = await r.json();
+            articleEl.textContent = d.content || '';
+            const editorEl = document.getElementById('article-editor');
+            if (editorEl) editorEl.value = d.content || '';
+            articleEl.style.transition = 'outline 0.3s';
+            articleEl.style.outline = '2px solid #22c55e';
+            setTimeout(() => { articleEl.style.outline = 'none'; }, 1500);
+        }
+    } catch (_) {}
+}
+
+async function reconcileChatAndState() {
+    if (syncInFlight) return;
+    syncInFlight = true;
+    try {
+        const resp = await fetch(`/api/runs/${runId}/chat/history?node=${nodeId}`);
+        if (!resp.ok) return;
+        const msgs = await resp.json();
+        let gotNewAssistant = false;
+        let gotAnyNew = false;
+        for (const msg of msgs) {
+            const added = appendMsg(msg.role, msg.content, msg.attachments || []);
+            if (added) {
+                gotAnyNew = true;
+                if (msg.role === 'assistant') gotNewAssistant = true;
+            }
+        }
+        if (gotNewAssistant) {
+            hideTyping();
+            await refreshOutputCards();
+            await refreshArticle();
+        } else if (gotAnyNew && nodeId === 'writer') {
+            await refreshArticle();
+        }
+    } catch (_) {
+    } finally {
+        syncInFlight = false;
+    }
+}
+
+function appendMsg(role, content, attachments = [], opts = {}) {
+    const key = messageKey(role, content, attachments);
+    if (!opts.force && renderedMessageKeys.has(key)) return false;
+    renderedMessageKeys.add(key);
+
     const div = document.createElement('div');
     div.className = `chat-msg ${role === 'user' ? 'chat-user' : 'chat-ai'} rounded-lg px-3 py-2 text-sm text-slate-200`;
     let html = (content || '').replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
@@ -492,9 +587,11 @@ function appendMsg(role, content, attachments = []) {
     div.innerHTML = html;
     chatBox.appendChild(div);
     chatBox.scrollTop = chatBox.scrollHeight;
+    return true;
 }
 
 function showTyping() {
+    if (document.getElementById('typing-indicator')) return;
     const div = document.createElement('div');
     div.id = 'typing-indicator';
     div.className = 'chat-msg chat-ai rounded-lg px-3 py-2 text-sm text-slate-400 flex gap-1';
@@ -503,6 +600,13 @@ function showTyping() {
     chatBox.scrollTop = chatBox.scrollHeight;
 }
 function hideTyping() { document.getElementById('typing-indicator')?.remove(); }
+
+loadChatHistory();
+setInterval(reconcileChatAndState, 4000);
+window.addEventListener('focus', reconcileChatAndState);
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) reconcileChatAndState();
+});
 
 async function sendChat() {
     const msg = chatInput.value.trim();
@@ -569,59 +673,6 @@ async function sendChat() {
         hideTyping();
         appendMsg('assistant', data.content || '(无回复)', data.attachments || []);
 
-        async function refreshLeftColumn() {
-            const leftCol = document.getElementById('review-left-column');
-            if (!leftCol) return false;
-            try {
-                const r = await fetch(`/runs/${runId}/review?node=${nodeId}`);
-                if (!r.ok) return false;
-                const html = await r.text();
-                const doc = new DOMParser().parseFromString(html, 'text/html');
-                const nextLeft = doc.getElementById('review-left-column');
-                if (!nextLeft) return false;
-                leftCol.innerHTML = nextLeft.innerHTML;
-                leftCol.style.transition = 'outline 0.3s';
-                leftCol.style.outline = '2px solid #22c55e';
-                setTimeout(() => { leftCol.style.outline = 'none'; }, 1500);
-                return true;
-            } catch(_) {
-                return false;
-            }
-        }
-
-        async function refreshOutputCards() {
-            const refreshed = await refreshLeftColumn();
-            if (refreshed) return;
-            const outputEl = document.getElementById('node-output-cards');
-            if (!outputEl) return;
-            try {
-                const r = await fetch(`/api/runs/${runId}/nodes/${nodeId}/output`);
-                if (r.ok) {
-                    outputEl.innerHTML = await r.text();
-                    outputEl.style.transition = 'outline 0.3s';
-                    outputEl.style.outline = '2px solid #22c55e';
-                    setTimeout(() => { outputEl.style.outline = 'none'; }, 1500);
-                }
-            } catch(_) {}
-        }
-
-        async function refreshArticle() {
-            const articleEl = document.getElementById('article-display');
-            if (!articleEl) return;
-            try {
-                const r = await fetch(`/api/runs/${runId}/article`);
-                if (r.ok) {
-                    const d = await r.json();
-                    articleEl.textContent = d.content || '';
-                    const editorEl = document.getElementById('article-editor');
-                    if (editorEl) editorEl.value = d.content || '';
-                    articleEl.style.transition = 'outline 0.3s';
-                    articleEl.style.outline = '2px solid #22c55e';
-                    setTimeout(() => { articleEl.style.outline = 'none'; }, 1500);
-                }
-            } catch(_) {}
-        }
-
         // 同步后刷新左栏
         if (data.state_updated) {
             await refreshOutputCards();
@@ -630,9 +681,15 @@ async function sendChat() {
             // writer 聊天经常改中后段，哪怕摘要比较没变也要强制刷新全文
             await refreshArticle();
         }
+
+        // 再做一次历史对账，防止浏览器请求/重绘异常导致右栏漏消息
+        setTimeout(reconcileChatAndState, 800);
     } catch(e) {
         hideTyping();
-        appendMsg('assistant', '⚠️ 请求失败');
+        // 先提示失败，再异步对账；如果后端其实已成功写入，这里会自动补回真实 assistant 回复
+        appendMsg('assistant', '⚠️ 请求失败，正在尝试重新同步聊天记录...');
+        setTimeout(reconcileChatAndState, 800);
+        setTimeout(reconcileChatAndState, 2500);
     }
 }
 
