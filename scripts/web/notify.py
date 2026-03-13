@@ -258,6 +258,32 @@ def _summary_formatter(run_id: str, state: Dict[str, Any]) -> str:
 
 # ── Discord 通知 ────────────────────────────────────────────────────
 
+def _get_discord_bot_token() -> str:
+    """从 openclaw.json 读取 Discord bot token"""
+    try:
+        cfg_path = Path.home() / ".openclaw" / "openclaw.json"
+        if cfg_path.exists():
+            import json as _json
+            cfg = _json.loads(cfg_path.read_text())
+            return str(cfg.get("channels", {}).get("discord", {}).get("token", ""))
+    except Exception:
+        pass
+    return ""
+
+
+def _get_discord_proxy() -> str:
+    """从 openclaw.json 读取 Discord proxy"""
+    try:
+        cfg_path = Path.home() / ".openclaw" / "openclaw.json"
+        if cfg_path.exists():
+            import json as _json
+            cfg = _json.loads(cfg_path.read_text())
+            return str(cfg.get("channels", {}).get("discord", {}).get("proxy", ""))
+    except Exception:
+        pass
+    return ""
+
+
 async def notify_discord(
     message: str,
     *,
@@ -266,7 +292,7 @@ async def notify_discord(
     node: Optional[str] = None,
     buttons: bool = False,
 ):
-    """向 Discord 发送通知。
+    """向 Discord 频道发送通知（直接使用 Discord Bot API）。
 
     Args:
         message: 消息内容
@@ -279,22 +305,32 @@ async def notify_discord(
         channel = _get_notify_channel()
     if not channel:
         return False
-    gateway_url = _get_gateway_url()
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            payload = {
-                "action": "send",
-                "channel": "discord",
-                "target": f"channel:{channel}",
-                "message": message,
-            }
 
+    bot_token = _get_discord_bot_token()
+    if not bot_token:
+        logger.warning("Discord notify skipped: no bot token")
+        return False
+
+    proxy = _get_discord_proxy()
+    try:
+        client_kwargs: Dict[str, Any] = {"timeout": 10}
+        if proxy:
+            client_kwargs["proxy"] = proxy
+
+        async with httpx.AsyncClient(**client_kwargs) as client:
             resp = await client.post(
-                f"{gateway_url}/api/message",
-                json=payload,
-                headers=build_gateway_headers(),
+                f"https://discord.com/api/v10/channels/{channel}/messages",
+                json={"content": message},
+                headers={
+                    "Authorization": f"Bot {bot_token}",
+                    "Content-Type": "application/json",
+                },
             )
-            return resp.status_code == 200
+            if resp.status_code in (200, 201):
+                return True
+            else:
+                logger.warning("Discord API error: %s %s", resp.status_code, resp.text[:200])
+                return False
     except Exception as e:
         logger.warning("Discord notify failed: %s", e)
         return False
