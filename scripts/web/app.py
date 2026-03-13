@@ -9,13 +9,16 @@ ContentPipe Web Console — FastAPI 主应用
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from web.auth import AuthMiddleware
+from web.ratelimit import RateLimitMiddleware
 
 # 确保 scripts/ 在 sys.path
 SCRIPTS_DIR = Path(__file__).parent.parent
@@ -34,6 +37,18 @@ app = FastAPI(
     version="0.8.1",
 )
 app.add_middleware(AuthMiddleware)
+app.add_middleware(RateLimitMiddleware)
+
+# CORS — 允许前后端分离部署
+_cors_origins = os.environ.get("CONTENTPIPE_CORS_ORIGINS", "").strip()
+if _cors_origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=[o.strip() for o in _cors_origins.split(",")],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
 # 静态文件
 STATIC_DIR = Path(__file__).parent / "static"
