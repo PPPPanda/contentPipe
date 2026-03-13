@@ -34,3 +34,4 @@ settings.local.yaml
 dist/
 build/
 config/.setup_done
+.state.lock

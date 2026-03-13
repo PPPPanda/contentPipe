@@ -495,20 +495,34 @@ def _deep_merge(base: dict, override: dict) -> None:
 # ── 内部函数 ──────────────────────────────────────────────────
 
 def _load_raw_state(run_id: str) -> dict | None:
+    import fcntl
     state_file = OUTPUT_DIR / "runs" / run_id / "state.yaml"
     if not state_file.exists():
         return None
-    return yaml.safe_load(state_file.read_text(encoding="utf-8"))
+    lock_file = OUTPUT_DIR / "runs" / run_id / ".state.lock"
+    with open(lock_file, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_SH)  # 共享锁，允许并发读
+        try:
+            return yaml.safe_load(state_file.read_text(encoding="utf-8"))
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
 
 
 def _save_state(state: dict) -> None:
+    import fcntl
     run_id = state.get("run_id", "unknown")
     run_dir = OUTPUT_DIR / "runs" / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "state.yaml").write_text(
-        yaml.dump(state, allow_unicode=True, default_flow_style=False),
-        encoding="utf-8",
-    )
+    state_file = run_dir / "state.yaml"
+    content = yaml.dump(state, allow_unicode=True, default_flow_style=False)
+    # 文件锁防止并发写入（pipeline 后台任务 vs API 请求）
+    lock_file = run_dir / ".state.lock"
+    with open(lock_file, "w") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            state_file.write_text(content, encoding="utf-8")
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
 
 
 def _enrich_run(state: dict) -> dict:
