@@ -28,6 +28,9 @@ if str(SCRIPTS_DIR) not in sys.path:
 from web.routes.pages import router as pages_router
 from web.routes.api import router as api_router
 from web.routes.sse import router as sse_router
+from web.routes.config_api import router as config_router
+from web.routes.artifacts_api import router as artifacts_router
+from web.routes.system_api import router as system_router
 
 # ── FastAPI 应用 ──────────────────────────────────────────────
 
@@ -64,6 +67,9 @@ app.mount("/output", StaticFiles(directory=str(OUTPUT_DIR)), name="output")
 # 路由
 app.include_router(pages_router)
 app.include_router(api_router, prefix="/api")
+app.include_router(config_router, prefix="/api")
+app.include_router(artifacts_router, prefix="/api")
+app.include_router(system_router, prefix="/api")
 app.include_router(sse_router)
 
 
