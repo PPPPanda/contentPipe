@@ -21,6 +21,24 @@ from web.run_manager import (
     PIPELINE_NODES,
 )
 
+SETUP_DONE_FLAG = Path(__file__).parent.parent.parent.parent / "config" / ".setup_done"
+
+
+def _is_configured() -> bool:
+    """检查是否已完成初始设置。"""
+    if SETUP_DONE_FLAG.exists():
+        return True
+    # 即使没有标记文件，如果 pipeline.yaml 存在且有 gateway_url，也视为已配置
+    config_path = Path(__file__).parent.parent.parent.parent / "config" / "pipeline.yaml"
+    if config_path.exists():
+        try:
+            import yaml
+            cfg = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
+            return bool(cfg.get("pipeline", {}).get("gateway_url"))
+        except Exception:
+            pass
+    return False
+
 router = APIRouter()
 
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
@@ -62,9 +80,25 @@ async def logout():
     return response
 
 
+@router.get("/setup", response_class=HTMLResponse)
+async def setup_wizard(request: Request):
+    """初始设置向导页面。"""
+    settings = load_settings()
+    pipeline = settings.get("pipeline", {})
+    return templates.TemplateResponse("setup.html", {
+        "request": request,
+        "gateway_url": pipeline.get("gateway_url", "http://localhost:18789"),
+        "default_model": pipeline.get("default_llm", "dashscope/qwen3.5-plus"),
+        "notify_channel": os.environ.get("CONTENTPIPE_NOTIFY_CHANNEL", ""),
+        "port": os.environ.get("CONTENTPIPE_PORT", "8765"),
+    })
+
+
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request):
-    """Dashboard 总览"""
+    """Dashboard 总览。首次访问未配置时重定向到设置向导。"""
+    if not _is_configured():
+        return RedirectResponse("/setup", status_code=302)
     stats = get_dashboard_stats()
     return templates.TemplateResponse("dashboard.html", {
         "request": request,

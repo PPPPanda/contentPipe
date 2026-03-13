@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ContentPipe — 初始设置</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+    <script>
+    tailwind.config = {
+        theme: {
+            extend: {
+                colors: {
+                    brand: { 400: '#6dd5fa', 500: '#2193b0', 600: '#1a7a96' },
+                    surface: { 900: '#0b0e17', 800: '#111827', 700: '#1a2035', 600: '#222d44' },
+                    accent: { cyan: '#00f2fe', purple: '#a855f7', pink: '#ec4899' },
+                },
+            }
+        }
+    }
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body {
+            background: #0b0e17;
+            color: #e2e8f0;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+        body::before {
+            content: '';
+            position: fixed;
+            top: -40%; left: -20%;
+            width: 80%; height: 80%;
+            background: radial-gradient(ellipse, rgba(0,242,254,0.04) 0%, transparent 70%);
+            pointer-events: none; z-index: 0;
+        }
+        .step { display: none; }
+        .step.active { display: block; }
+        .card {
+            background: linear-gradient(145deg, rgba(26,32,53,0.9) 0%, rgba(11,14,23,0.95) 100%);
+            border: 1px solid rgba(100,116,139,0.2);
+            border-radius: 12px;
+        }
+        .progress-dot {
+            width: 10px; height: 10px; border-radius: 50%;
+            background: #334155; transition: all 0.3s;
+        }
+        .progress-dot.done { background: #22c55e; }
+        .progress-dot.current { background: #6dd5fa; box-shadow: 0 0 8px rgba(109,213,250,0.5); }
+        .test-result { min-height: 24px; }
+        .spin { animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-xl relative z-10">
+        <!-- Header -->
+        <div class="text-center mb-8">
+            <h1 class="text-3xl font-bold bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
+                📝 ContentPipe 初始设置
+            </h1>
+            <p class="text-slate-400 mt-2">3 步完成配置，开始 AI 图文创作</p>
+        </div>
+
+        <!-- Progress -->
+        <div class="flex items-center justify-center gap-3 mb-8">
+            <div class="progress-dot current" id="dot-1"></div>
+            <div class="w-12 h-px bg-slate-700"></div>
+            <div class="progress-dot" id="dot-2"></div>
+            <div class="w-12 h-px bg-slate-700"></div>
+            <div class="progress-dot" id="dot-3"></div>
+        </div>
+
+        <form id="setup-form">
+
+        <!-- Step 1: Gateway -->
+        <div class="step active card p-6" id="step-1">
+            <h2 class="text-lg font-semibold text-white mb-1">🔗 Step 1: 连接 OpenClaw Gateway</h2>
+            <p class="text-sm text-slate-400 mb-5">ContentPipe 通过 Gateway 调用 LLM 模型和发送通知</p>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">Gateway 地址</label>
+                    <div class="flex gap-2">
+                        <input type="text" name="gateway_url" id="gateway-url"
+                               value="{{ gateway_url }}"
+                               placeholder="http://localhost:18789"
+                               class="flex-1 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-cyan-500 focus:outline-none">
+                        <button type="button" onclick="testGateway()"
+                                class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-sm text-white rounded-lg transition"
+                                id="test-btn">
+                            测试连接
+                        </button>
+                    </div>
+                </div>
+
+                <div class="test-result" id="gateway-result"></div>
+
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">LLM 调用模式</label>
+                    <div class="flex gap-4">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="llm_mode" value="gateway" checked
+                                   class="text-cyan-500">
+                            <span class="text-sm text-slate-300">Gateway 代理 <span class="text-xs text-slate-500">(推荐)</span></span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="radio" name="llm_mode" value="direct"
+                                   class="text-cyan-500">
+                            <span class="text-sm text-slate-300">直连 API</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex justify-end mt-6">
+                <button type="button" onclick="goStep(2)" id="next-1"
+                        class="px-6 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg transition font-medium disabled:opacity-40"
+                        disabled>
+                    下一步 →
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 2: 模型 + 通知 -->
+        <div class="step card p-6" id="step-2">
+            <h2 class="text-lg font-semibold text-white mb-1">🤖 Step 2: 模型 & 通知</h2>
+            <p class="text-sm text-slate-400 mb-5">选择 LLM 模型，并配置通知频道</p>
+
+            <!-- 默认模型 -->
+            <div class="mb-5">
+                <label class="block text-sm text-slate-300 mb-1.5">默认模型</label>
+                <select name="default_model" id="default-model"
+                        class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-cyan-500 focus:outline-none">
+                    <option value="">加载中...</option>
+                </select>
+            </div>
+
+            <!-- 角色覆盖 -->
+            <div class="mb-5">
+                <p class="text-xs text-slate-500 mb-2">角色模型覆盖（留空 = 使用默认模型）</p>
+                <div class="space-y-2" id="role-overrides">
+                    {% for role, label in [('scout', '🔍 Scout'), ('researcher', '📚 Researcher'), ('writer', '✍️ Writer'), ('de_ai_editor', '✏️ Editor'), ('director', '🎬 Director')] %}
+                    <div class="flex items-center gap-3">
+                        <label class="w-32 text-xs text-slate-400">{{ label }}</label>
+                        <select name="model_{{ role }}"
+                                class="model-select flex-1 bg-slate-800 border border-slate-600 rounded px-2.5 py-1.5 text-white text-xs focus:border-cyan-500 focus:outline-none">
+                            <option value="">使用默认</option>
+                        </select>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <hr class="border-slate-700 my-5">
+
+            <!-- 通知频道 -->
+            <div>
+                <label class="block text-sm text-slate-300 mb-1.5">📢 通知频道</label>
+                <p class="text-xs text-slate-500 mb-2">Pipeline 事件（等待审核、完成、失败）会推送到此频道</p>
+                <select name="notify_channel" id="notify-channel"
+                        class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-cyan-500 focus:outline-none">
+                    <option value="">不启用通知</option>
+                </select>
+                <p class="text-xs text-slate-500 mt-1" id="notify-hint">连接 Gateway 后自动加载可用频道</p>
+            </div>
+
+            <div class="flex justify-between mt-6">
+                <button type="button" onclick="goStep(1)"
+                        class="px-4 py-2 text-sm text-slate-400 hover:text-white transition">
+                    ← 上一步
+                </button>
+                <button type="button" onclick="goStep(3)"
+                        class="px-6 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg transition font-medium">
+                    下一步 →
+                </button>
+            </div>
+        </div>
+
+        <!-- Step 3: 可选 -->
+        <div class="step card p-6" id="step-3">
+            <h2 class="text-lg font-semibold text-white mb-1">⚙️ Step 3: 可选配置</h2>
+            <p class="text-sm text-slate-400 mb-5">这些可以稍后在设置页面修改</p>
+
+            <div class="space-y-5">
+                <!-- 图片引擎 -->
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">🎨 图片生成引擎</label>
+                    <select name="image_engine"
+                            class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-cyan-500 focus:outline-none">
+                        <option value="auto">自动选择</option>
+                        <option value="dall-e-3">DALL-E 3</option>
+                        <option value="dashscope">DashScope 通义万相</option>
+                        <option value="browser:tongyi">浏览器: 通义万相</option>
+                        <option value="browser:jimeng">浏览器: 即梦AI</option>
+                    </select>
+                </div>
+
+                <!-- 作者名 -->
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">✏️ 作者名</label>
+                    <input type="text" name="wechat_author" value="ContentPipe"
+                           placeholder="公众号文章署名"
+                           class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-cyan-500 focus:outline-none">
+                </div>
+
+                <!-- 微信 -->
+                <div class="card p-4 border-amber-700/30 bg-amber-900/10">
+                    <p class="text-xs text-amber-200 mb-2">📱 微信公众号发布（可选）</p>
+                    <p class="text-xs text-slate-400 leading-relaxed">
+                        如需发布到公众号草稿箱，请在 <code class="text-amber-100">.env.local</code> 中配置：
+                    </p>
+                    <pre class="text-xs text-slate-300 mt-2 bg-slate-900 p-2 rounded">WECHAT_APPID=你的AppID
+WECHAT_SECRET=你的AppSecret</pre>
+                    <p class="text-xs text-slate-500 mt-2">未配置时 Publisher 会本地保存 HTML 产物，不会创建公众号草稿。</p>
+                </div>
+
+                <!-- 服务端口 -->
+                <div>
+                    <label class="block text-sm text-slate-300 mb-1.5">🌐 服务端口</label>
+                    <input type="number" name="port" value="{{ port }}"
+                           class="w-32 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-cyan-500 focus:outline-none">
+                </div>
+            </div>
+
+            <div class="flex justify-between mt-6">
+                <button type="button" onclick="goStep(2)"
+                        class="px-4 py-2 text-sm text-slate-400 hover:text-white transition">
+                    ← 上一步
+                </button>
+                <button type="button" onclick="saveSetup()"
+                        class="px-6 py-2.5 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white rounded-lg transition font-medium"
+                        id="save-btn">
+                    ✅ 完成设置
+                </button>
+            </div>
+        </div>
+
+        </form>
+
+        <!-- 完成页 -->
+        <div class="step card p-8 text-center" id="step-done">
+            <div class="text-5xl mb-4">🎉</div>
+            <h2 class="text-xl font-bold text-white mb-2">设置完成！</h2>
+            <p class="text-sm text-slate-400 mb-6">ContentPipe 已准备就绪，开始创作你的第一篇文章吧</p>
+            <a href="/"
+               class="inline-block px-6 py-2.5 bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white rounded-lg transition font-medium">
+                进入工作台 →
+            </a>
+        </div>
+
+        <div class="text-center mt-4">
+            <a href="/" class="text-xs text-slate-600 hover:text-slate-400 transition">跳过设置，直接进入</a>
+        </div>
+    </div>
+
+<script>
+let currentStep = 1;
+let gatewayOk = false;
+let modelsLoaded = false;
+
+function goStep(n) {
+    document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
+    document.getElementById('step-' + n).classList.add('active');
+
+    for (let i = 1; i <= 3; i++) {
+        const dot = document.getElementById('dot-' + i);
+        dot.classList.remove('current', 'done');
+        if (i < n) dot.classList.add('done');
+        else if (i === n) dot.classList.add('current');
+    }
+
+    currentStep = n;
+
+    // 进入 Step 2 时加载模型和频道
+    if (n === 2 && !modelsLoaded && gatewayOk) {
+        loadModelsAndChannels();
+    }
+}
+
+async function testGateway() {
+    const url = document.getElementById('gateway-url').value.trim();
+    const result = document.getElementById('gateway-result');
+    const btn = document.getElementById('test-btn');
+
+    if (!url) {
+        result.innerHTML = '<p class="text-xs text-red-400">请输入 Gateway 地址</p>';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = '测试中...';
+    result.innerHTML = '<p class="text-xs text-slate-400"><span class="spin inline-block">⏳</span> 正在连接...</p>';
+
+    try {
+        const resp = await fetch('/api/setup/test-gateway', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({gateway_url: url})
+        });
+        const data = await resp.json();
+
+        if (data.ok) {
+            result.innerHTML = `
+                <div class="p-3 rounded-lg bg-green-900/20 border border-green-700/30">
+                    <p class="text-xs text-green-300">✅ 连接成功</p>
+                    <p class="text-xs text-slate-400 mt-1">
+                        可用模型: ${data.model_count} 个
+                        ${data.channel_count > 0 ? ' · 通知频道: ' + data.channel_count + ' 个' : ''}
+                    </p>
+                </div>`;
+            gatewayOk = true;
+            document.getElementById('next-1').disabled = false;
+        } else {
+            result.innerHTML = `
+                <div class="p-3 rounded-lg bg-red-900/20 border border-red-700/30">
+                    <p class="text-xs text-red-300">❌ 连接失败</p>
+                    <p class="text-xs text-slate-400 mt-1">${data.error || '无法访问 Gateway'}</p>
+                </div>`;
+            gatewayOk = false;
+        }
+    } catch (e) {
+        result.innerHTML = `
+            <div class="p-3 rounded-lg bg-red-900/20 border border-red-700/30">
+                <p class="text-xs text-red-300">❌ 请求失败: ${e.message}</p>
+            </div>`;
+        gatewayOk = false;
+    }
+
+    btn.disabled = false;
+    btn.textContent = '测试连接';
+}
+
+async function loadModelsAndChannels() {
+    const url = document.getElementById('gateway-url').value.trim();
+    try {
+        const resp = await fetch('/api/setup/discover?gateway_url=' + encodeURIComponent(url));
+        const data = await resp.json();
+
+        // 填充模型下拉框
+        if (data.models && data.models.length > 0) {
+            const defaultSelect = document.getElementById('default-model');
+            defaultSelect.innerHTML = '';
+            data.models.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.textContent = m.label || m.id;
+                if (m.id === '{{ default_model }}') opt.selected = true;
+                defaultSelect.appendChild(opt);
+            });
+
+            // 角色覆盖也填
+            document.querySelectorAll('.model-select').forEach(sel => {
+                const current = sel.value;
+                const firstOpt = sel.querySelector('option');
+                sel.innerHTML = '';
+                const emptyOpt = document.createElement('option');
+                emptyOpt.value = '';
+                emptyOpt.textContent = '使用默认';
+                sel.appendChild(emptyOpt);
+                data.models.forEach(m => {
+                    const opt = document.createElement('option');
+                    opt.value = m.id;
+                    opt.textContent = m.label || m.id;
+                    sel.appendChild(opt);
+                });
+                sel.value = current;
+            });
+        }
+
+        // 填充频道下拉框
+        if (data.channels && data.channels.length > 0) {
+            const channelSelect = document.getElementById('notify-channel');
+            channelSelect.innerHTML = '<option value="">不启用通知</option>';
+            data.channels.forEach(ch => {
+                const opt = document.createElement('option');
+                opt.value = ch.id;
+                opt.textContent = ch.label;
+                if (ch.id === '{{ notify_channel }}') opt.selected = true;
+                channelSelect.appendChild(opt);
+            });
+            document.getElementById('notify-hint').textContent =
+                `发现 ${data.channels.length} 个可用频道`;
+        }
+
+        modelsLoaded = true;
+    } catch (e) {
+        console.error('Failed to load models/channels:', e);
+    }
+}
+
+async function saveSetup() {
+    const btn = document.getElementById('save-btn');
+    btn.disabled = true;
+    btn.textContent = '保存中...';
+
+    const form = document.getElementById('setup-form');
+    const formData = new FormData(form);
+    const payload = {};
+    for (const [k, v] of formData.entries()) {
+        payload[k] = v;
+    }
+
+    try {
+        const resp = await fetch('/api/setup/save', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+
+        if (data.ok) {
+            goStep('done');
+            // 更新进度条为全完成
+            for (let i = 1; i <= 3; i++) {
+                const dot = document.getElementById('dot-' + i);
+                dot.classList.remove('current');
+                dot.classList.add('done');
+            }
+        } else {
+            alert('保存失败: ' + (data.error || '未知错误'));
+        }
+    } catch (e) {
+        alert('保存失败: ' + e.message);
+    }
+
+    btn.disabled = false;
+    btn.textContent = '✅ 完成设置';
+}
+</script>
+</body>
+</html>

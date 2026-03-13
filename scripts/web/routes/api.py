@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import re
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -1293,6 +1295,245 @@ async def api_update_settings_form(request: Request):
     return HTMLResponse(
         '<div class="text-green-400 text-sm mt-2">✅ 设置已保存</div>',
     )
+
+
+# ── Setup Wizard API ─────────────────────────────────────────
+
+
+@router.post("/setup/test-gateway")
+async def api_setup_test_gateway(request: Request):
+    """测试 Gateway 连接，返回模型数量和频道数量。"""
+    import httpx
+
+    body = await request.json()
+    gateway_url = (body.get("gateway_url") or "").strip().rstrip("/")
+    if not gateway_url:
+        return JSONResponse({"ok": False, "error": "请输入 Gateway 地址"})
+
+    from gateway_auth import get_gateway_token
+
+    token = get_gateway_token()
+    headers = {}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    model_count = 0
+    channel_count = 0
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            # 1. 健康检查
+            health_resp = await client.get(f"{gateway_url}/health", headers=headers)
+            if health_resp.status_code != 200:
+                return JSONResponse({"ok": False, "error": f"Gateway 返回 HTTP {health_resp.status_code}"})
+
+            # 2. 模型列表 — 通过 CLI
+            try:
+                result = subprocess.run(
+                    ["openclaw", "models", "list", "--json"],
+                    capture_output=True, text=True, timeout=15,
+                    env={**os.environ, "NO_COLOR": "1"},
+                )
+                if result.returncode == 0:
+                    import json as _json
+                    raw = _json.loads(result.stdout)
+                    raw_models = raw.get("models", raw) if isinstance(raw, dict) else raw
+                    model_count = len(raw_models) if isinstance(raw_models, list) else 0
+            except Exception:
+                model_count = -1  # 无法获取但不阻止
+
+            # 3. 频道 — 从 openclaw.json 检测已配置的 providers
+            try:
+                cfg_path = Path.home() / ".openclaw" / "openclaw.json"
+                if cfg_path.exists():
+                    import json as _json
+                    cfg = _json.loads(cfg_path.read_text(encoding="utf-8"))
+                    ch_cfg = cfg.get("channels", {})
+                    channel_count = sum(1 for p in ch_cfg if ch_cfg[p].get("accounts") or ch_cfg[p].get("token"))
+            except Exception:
+                channel_count = 0
+
+    except httpx.ConnectError:
+        return JSONResponse({"ok": False, "error": f"无法连接 {gateway_url}，请检查 Gateway 是否已启动"})
+    except httpx.TimeoutException:
+        return JSONResponse({"ok": False, "error": "连接超时"})
+    except Exception as e:
+        return JSONResponse({"ok": False, "error": str(e)})
+
+    return JSONResponse({
+        "ok": True,
+        "model_count": model_count,
+        "channel_count": channel_count,
+    })
+
+
+@router.get("/setup/discover")
+async def api_setup_discover(gateway_url: str = "http://localhost:18789"):
+    """发现 Gateway 的模型和频道列表，供 Setup 向导前端填充下拉框。"""
+    import httpx
+
+    gateway_url = gateway_url.strip().rstrip("/")
+    from gateway_auth import get_gateway_token
+    token = get_gateway_token()
+    headers = {"Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    models = []
+    channels = []
+
+    # 模型列表 — 通过 CLI 获取
+    try:
+        result = subprocess.run(
+            ["openclaw", "models", "list", "--json"],
+            capture_output=True, text=True, timeout=15,
+            env={**os.environ, "NO_COLOR": "1"},
+        )
+        if result.returncode == 0:
+            import json as _json
+            raw = _json.loads(result.stdout)
+            raw_models = raw.get("models", raw) if isinstance(raw, dict) else raw
+            if isinstance(raw_models, list):
+                for m in raw_models:
+                    mid = m.get("key") or m.get("model") or m.get("id") or m.get("name", "")
+                    if mid:
+                        name = m.get("name", mid)
+                        tags = m.get("tags", [])
+                        configured = "configured" in tags if isinstance(tags, list) else "configured" in str(tags)
+                        prefix = "✅" if configured else "⬜"
+                        ctx = m.get("contextWindow", 0)
+                        ctx_label = f" ({ctx // 1024}k)" if ctx > 0 else ""
+                        models.append({"id": mid, "label": f"{prefix} {name}{ctx_label}"})
+    except Exception:
+        pass
+
+    # 如果 CLI 失败，fallback 到基本列表
+    if not models:
+        models = [
+            {"id": "dashscope/qwen3.5-plus", "label": "dashscope/qwen3.5-plus"},
+            {"id": "anthropic/claude-sonnet-4-6", "label": "anthropic/claude-sonnet-4-6"},
+            {"id": "anthropic/claude-opus-4-6", "label": "anthropic/claude-opus-4-6"},
+            {"id": "openai-codex/gpt-5.4", "label": "openai-codex/gpt-5.4"},
+        ]
+
+    # 频道列表 — 从 openclaw.json 读可用 channel providers，
+    # 然后通过 Discord Bot Token 获取 guild channel list
+    try:
+        cfg_path = Path.home() / ".openclaw" / "openclaw.json"
+        if cfg_path.exists():
+            import json as _json
+            cfg = _json.loads(cfg_path.read_text(encoding="utf-8"))
+            discord_cfg = cfg.get("channels", {}).get("discord", {})
+
+            # 获取 Discord bot token
+            bot_token = ""
+            accounts = discord_cfg.get("accounts", {})
+            for acc_id, acc in accounts.items():
+                t = acc.get("token", "")
+                if t:
+                    bot_token = t
+                    break
+            if not bot_token:
+                bot_token = discord_cfg.get("token", "")
+
+            if bot_token:
+                async with httpx.AsyncClient(timeout=10) as client:
+                    # 获取 bot 的 guilds
+                    guilds_resp = await client.get(
+                        "https://discord.com/api/v10/users/@me/guilds",
+                        headers={"Authorization": f"Bot {bot_token}"},
+                    )
+                    if guilds_resp.status_code == 200:
+                        guilds = guilds_resp.json()
+                        for guild in guilds[:5]:  # 最多 5 个 guild
+                            guild_id = guild.get("id", "")
+                            guild_name = guild.get("name", "")
+                            ch_resp = await client.get(
+                                f"https://discord.com/api/v10/guilds/{guild_id}/channels",
+                                headers={"Authorization": f"Bot {bot_token}"},
+                            )
+                            if ch_resp.status_code == 200:
+                                for ch in ch_resp.json():
+                                    if ch.get("type") == 0:  # 文字频道
+                                        channels.append({
+                                            "id": ch["id"],
+                                            "label": f"💬 [{guild_name}] #{ch.get('name', '')}",
+                                            "provider": "discord",
+                                        })
+    except Exception:
+        pass
+
+    return JSONResponse({"models": models, "channels": channels})
+
+
+@router.post("/setup/save")
+async def api_setup_save(request: Request):
+    """保存 Setup 向导配置。"""
+    body = await request.json()
+    settings = load_settings()
+    pipeline = settings.setdefault("pipeline", {})
+
+    # Gateway
+    if body.get("gateway_url"):
+        pipeline["gateway_url"] = body["gateway_url"].strip().rstrip("/")
+    if body.get("llm_mode"):
+        pipeline["llm_mode"] = body["llm_mode"]
+
+    # 模型
+    if body.get("default_model"):
+        pipeline["default_llm"] = body["default_model"]
+
+    # 角色覆盖
+    overrides = pipeline.setdefault("llm_overrides", {})
+    for role in ["scout", "researcher", "writer", "de_ai_editor", "director"]:
+        val = body.get(f"model_{role}", "").strip()
+        if val:
+            overrides[role] = val
+
+    # 图片引擎
+    if body.get("image_engine"):
+        pipeline["image_engine"] = body["image_engine"]
+
+    # 微信作者
+    wechat = settings.setdefault("wechat", {})
+    if body.get("wechat_author"):
+        wechat["author"] = body["wechat_author"]
+
+    save_settings(settings)
+
+    # 通知频道 → 写入 .env.local
+    notify_channel = body.get("notify_channel", "").strip()
+    env_local_path = Path(__file__).parent.parent.parent.parent / ".env.local"
+    _update_env_local(env_local_path, "CONTENTPIPE_NOTIFY_CHANNEL", notify_channel)
+
+    # 端口
+    port = body.get("port", "").strip()
+    if port:
+        _update_env_local(env_local_path, "CONTENTPIPE_PORT", port)
+
+    # 标记设置完成
+    setup_flag = Path(__file__).parent.parent.parent.parent / "config" / ".setup_done"
+    setup_flag.parent.mkdir(parents=True, exist_ok=True)
+    setup_flag.write_text("configured\n")
+
+    return JSONResponse({"ok": True})
+
+
+def _update_env_local(env_path: Path, key: str, value: str):
+    """更新 .env.local 中的指定键值，保留其他行。"""
+    lines = []
+    found = False
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith(f"{key}="):
+                if value:
+                    lines.append(f"{key}={value}")
+                found = True
+            else:
+                lines.append(line)
+    if not found and value:
+        lines.append(f"{key}={value}")
+    env_path.write_text("\n".join(lines) + "\n" if lines else "", encoding="utf-8")
 
 
 # ── 内部函数 ──────────────────────────────────────────────────

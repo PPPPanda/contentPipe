@@ -33,3 +33,4 @@ settings.local.yaml
 *.egg-info/
 dist/
 build/
+config/.setup_done
