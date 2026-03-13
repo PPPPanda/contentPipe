@@ -1453,50 +1453,138 @@ async def api_setup_discover(gateway_url: str = "http://localhost:18789"):
             {"id": "dashscope/kimi-k2.5", "label": "dashscope/kimi-k2.5"},
         ]
 
-    # 频道列表 — 从 openclaw.json 读可用 channel providers，
-    # 然后通过 Discord Bot Token 获取 guild channel list
+    # 频道列表 — 从 openclaw.json 读所有 channel providers，自动发现可用频道
     try:
         cfg_path = Path.home() / ".openclaw" / "openclaw.json"
         if cfg_path.exists():
             import json as _json
             cfg = _json.loads(cfg_path.read_text(encoding="utf-8"))
-            discord_cfg = cfg.get("channels", {}).get("discord", {})
+            all_channels_cfg = cfg.get("channels", {})
+            proxy_url = all_channels_cfg.get("discord", {}).get("proxy", "")
 
-            # 获取 Discord bot token
-            bot_token = ""
-            accounts = discord_cfg.get("accounts", {})
-            for acc_id, acc in accounts.items():
-                t = acc.get("token", "")
-                if t:
-                    bot_token = t
-                    break
-            if not bot_token:
-                bot_token = discord_cfg.get("token", "")
+            async with httpx.AsyncClient(
+                timeout=10,
+                proxy=proxy_url if proxy_url else None,
+            ) as client:
+                # ── Discord ──
+                discord_cfg = all_channels_cfg.get("discord", {})
+                if discord_cfg.get("enabled", False):
+                    bot_token = ""
+                    accounts = discord_cfg.get("accounts", {})
+                    for acc_id, acc in accounts.items():
+                        t = acc.get("token", "")
+                        if t:
+                            bot_token = t
+                            break
+                    if not bot_token:
+                        bot_token = discord_cfg.get("token", "")
 
-            if bot_token:
-                async with httpx.AsyncClient(timeout=10) as client:
-                    # 获取 bot 的 guilds
-                    guilds_resp = await client.get(
-                        "https://discord.com/api/v10/users/@me/guilds",
-                        headers={"Authorization": f"Bot {bot_token}"},
-                    )
-                    if guilds_resp.status_code == 200:
-                        guilds = guilds_resp.json()
-                        for guild in guilds[:5]:  # 最多 5 个 guild
-                            guild_id = guild.get("id", "")
-                            guild_name = guild.get("name", "")
-                            ch_resp = await client.get(
-                                f"https://discord.com/api/v10/guilds/{guild_id}/channels",
+                    if bot_token:
+                        try:
+                            guilds_resp = await client.get(
+                                "https://discord.com/api/v10/users/@me/guilds",
                                 headers={"Authorization": f"Bot {bot_token}"},
                             )
-                            if ch_resp.status_code == 200:
-                                for ch in ch_resp.json():
-                                    if ch.get("type") == 0:  # 文字频道
-                                        channels.append({
-                                            "id": ch["id"],
-                                            "label": f"💬 [{guild_name}] #{ch.get('name', '')}",
-                                            "provider": "discord",
-                                        })
+                            if guilds_resp.status_code == 200:
+                                for guild in guilds_resp.json()[:5]:
+                                    guild_id = guild.get("id", "")
+                                    guild_name = guild.get("name", "")
+                                    ch_resp = await client.get(
+                                        f"https://discord.com/api/v10/guilds/{guild_id}/channels",
+                                        headers={"Authorization": f"Bot {bot_token}"},
+                                    )
+                                    if ch_resp.status_code == 200:
+                                        for ch in ch_resp.json():
+                                            if ch.get("type") == 0:
+                                                channels.append({
+                                                    "id": ch["id"],
+                                                    "label": f"💬 Discord [{guild_name}] #{ch.get('name', '')}",
+                                                    "provider": "discord",
+                                                })
+                        except Exception:
+                            pass
+
+                # ── 飞书 (Feishu) ──
+                feishu_cfg = all_channels_cfg.get("feishu", {})
+                if feishu_cfg.get("enabled", False):
+                    app_id = feishu_cfg.get("appId", "")
+                    app_secret = feishu_cfg.get("appSecret", "")
+                    domain = feishu_cfg.get("domain", "feishu")
+                    base_url = "https://open.feishu.cn" if domain == "feishu" else "https://open.larksuite.com"
+
+                    if app_id and app_secret:
+                        try:
+                            # 获取 tenant_access_token
+                            token_resp = await client.post(
+                                f"{base_url}/open-apis/auth/v3/tenant_access_token/internal",
+                                json={"app_id": app_id, "app_secret": app_secret},
+                            )
+                            if token_resp.status_code == 200:
+                                tenant_token = token_resp.json().get("tenant_access_token", "")
+                                if tenant_token:
+                                    # 获取 bot 所在的群列表
+                                    chats_resp = await client.get(
+                                        f"{base_url}/open-apis/im/v1/chats?page_size=50",
+                                        headers={"Authorization": f"Bearer {tenant_token}"},
+                                    )
+                                    if chats_resp.status_code == 200:
+                                        items = chats_resp.json().get("data", {}).get("items", [])
+                                        for chat in items:
+                                            chat_id = chat.get("chat_id", "")
+                                            chat_name = chat.get("name", "未命名群")
+                                            chat_type = chat.get("chat_type", "")
+                                            icon = "👤" if chat_type == "p2p" else "👥"
+                                            channels.append({
+                                                "id": chat_id,
+                                                "label": f"{icon} 飞书 {chat_name}",
+                                                "provider": "feishu",
+                                            })
+                        except Exception:
+                            pass
+
+                # ── KOOK ──
+                kook_cfg = all_channels_cfg.get("kook", {})
+                if kook_cfg.get("enabled", False):
+                    kook_token = kook_cfg.get("token", "")
+                    if kook_token:
+                        try:
+                            guilds_resp = await client.get(
+                                "https://www.kookapp.cn/api/v3/guild/list",
+                                headers={"Authorization": f"Bot {kook_token}"},
+                            )
+                            if guilds_resp.status_code == 200:
+                                guild_items = guilds_resp.json().get("data", {}).get("items", [])
+                                for guild in guild_items[:5]:
+                                    guild_id = guild.get("id", "")
+                                    guild_name = guild.get("name", "")
+                                    ch_resp = await client.get(
+                                        f"https://www.kookapp.cn/api/v3/channel/list?guild_id={guild_id}",
+                                        headers={"Authorization": f"Bot {kook_token}"},
+                                    )
+                                    if ch_resp.status_code == 200:
+                                        ch_items = ch_resp.json().get("data", {}).get("items", [])
+                                        for ch in ch_items:
+                                            if ch.get("type") == 1:  # 文字频道
+                                                channels.append({
+                                                    "id": ch.get("id", ""),
+                                                    "label": f"💬 KOOK [{guild_name}] #{ch.get('name', '')}",
+                                                    "provider": "kook",
+                                                })
+                        except Exception:
+                            pass
+
+                # ── 企业微信 (WeCom) ──
+                wecom_cfg = all_channels_cfg.get("wecom", {})
+                if wecom_cfg.get("enabled", False):
+                    # 企业微信主要通过 webhook 发送，不支持频道发现
+                    # 但可以列出已配置的 agentId
+                    agent_id = wecom_cfg.get("agentId", "")
+                    if agent_id:
+                        channels.append({
+                            "id": f"wecom:{agent_id}",
+                            "label": f"🏢 企业微信 应用 #{agent_id}",
+                            "provider": "wecom",
+                        })
     except Exception:
         pass
 
