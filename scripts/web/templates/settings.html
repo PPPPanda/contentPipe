@@ -154,10 +154,9 @@
 
         {% set wechat = settings.get('wechat', {}) %}
         <div class="mb-3 p-3 rounded-lg bg-amber-900/20 border border-amber-700/30 text-xs text-amber-200 leading-relaxed">
-            发布到公众号草稿箱需要在 <code class="text-amber-100">.env.local</code> 中配置：
-            <br><code class="text-amber-100">WECHAT_APPID=你的AppID</code>
-            <br><code class="text-amber-100">WECHAT_SECRET=你的AppSecret</code>
-            <br><br>并把服务器出口 IP 加入公众号后台 <strong>IP 白名单</strong>。
+            微信发布凭据会保存到 <code class="text-amber-100">.env.local</code>，不会写入 <code class="text-amber-100">pipeline.yaml</code>。
+            <br>网页只显示掩码，不回显明文。
+            <br><br>要让 Publisher 真正创建公众号草稿，还需要把当前服务的 <strong>出口 IP</strong> 加入公众号后台 <strong>IP 白名单</strong>。
             未配置时 Publisher 只保存本地 HTML 产物。
         </div>
         <div class="space-y-3">
@@ -165,6 +164,39 @@
                 <label class="w-28 text-sm text-slate-300">作者名</label>
                 <input type="text" name="wechat_author" value="{{ wechat.get('author', 'ContentPipe') }}"
                        class="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm focus:border-sky-500 focus:outline-none">
+            </div>
+
+            <div class="flex items-center gap-4">
+                <label class="w-28 text-sm text-slate-300">AppID</label>
+                <input type="password" name="wechat_appid" value=""
+                       placeholder="{% if wechat_appid_set %}*****（已配置，留空不修改）{% else %}填写公众号 AppID{% endif %}"
+                       autocomplete="new-password"
+                       class="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm placeholder-slate-500 focus:border-sky-500 focus:outline-none">
+                <span class="text-xs {% if wechat_appid_set %}text-green-400{% else %}text-slate-500{% endif %}">
+                    {% if wechat_appid_set %}已配置 {{ wechat_appid_masked }}{% else %}未配置{% endif %}
+                </span>
+            </div>
+
+            <div class="flex items-center gap-4">
+                <label class="w-28 text-sm text-slate-300">AppSecret</label>
+                <input type="password" name="wechat_secret" value=""
+                       placeholder="{% if wechat_secret_set %}*****（已配置，留空不修改）{% else %}填写公众号 AppSecret{% endif %}"
+                       autocomplete="new-password"
+                       class="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm placeholder-slate-500 focus:border-sky-500 focus:outline-none">
+                <span class="text-xs {% if wechat_secret_set %}text-green-400{% else %}text-slate-500{% endif %}">
+                    {% if wechat_secret_set %}已配置 {{ wechat_secret_masked }}{% else %}未配置{% endif %}
+                </span>
+            </div>
+
+            <div class="ml-32 p-3 rounded-lg bg-slate-900/60 border border-slate-700">
+                <div class="text-xs text-slate-400 mb-1">当前服务出口 IP（用于公众号白名单）</div>
+                {% if public_ip %}
+                    <div class="text-sm text-green-300 font-mono">{{ public_ip }}</div>
+                    <div class="text-xs text-slate-500 mt-1">请把这个 IP 加到 mp.weixin.qq.com → 开发接口管理 → IP 白名单</div>
+                {% else %}
+                    <div class="text-sm text-amber-300">未能自动探测出口 IP</div>
+                    <div class="text-xs text-slate-500 mt-1">{{ public_ip_error or '你可以直接和 OpenClaw 的 LLM 对话问：当前机器出口 IP 是多少？' }}</div>
+                {% endif %}
             </div>
         </div>
     </div>

@@ -1449,9 +1449,21 @@ async def api_get_settings():
 
 @router.put("/settings")
 async def api_update_settings(request: Request):
-    """更新配置"""
+    """更新配置（JSON）。微信凭据写入 .env.local，不落 pipeline.yaml。"""
     settings = await request.json()
+
+    # 敏感项拆出，避免写入 pipeline.yaml
+    wechat_appid = str(settings.pop("wechat_appid", "") or "").strip()
+    wechat_secret = str(settings.pop("wechat_secret", "") or "").strip()
+
     save_settings(settings)
+
+    env_local_path = Path(__file__).parent.parent.parent.parent / ".env.local"
+    if wechat_appid:
+        _update_env_local(env_local_path, "WECHAT_APPID", wechat_appid)
+    if wechat_secret:
+        _update_env_local(env_local_path, "WECHAT_SECRET", wechat_secret)
+
     return {"ok": True}
 
 
@@ -1485,20 +1497,29 @@ async def api_update_settings_form(request: Request):
         elif role in overrides:
             del overrides[role]  # 清空 = 使用默认
 
-    # WeChat config（凭证只走环境变量，不落配置文件）
+    # WeChat config（作者名写配置；凭证只走 .env.local，不落 pipeline.yaml）
     wechat = settings.setdefault("wechat", {})
     if form.get("wechat_author"):
         wechat["author"] = form["wechat_author"]
 
     save_settings(settings)
 
-    # 通知频道 → 写入 .env.local
-    notify_channel = str(form.get("notify_channel", "")).strip()
+    # 环境变量 → 写入 .env.local，并同步当前进程环境
     env_local_path = Path(__file__).parent.parent.parent.parent / ".env.local"
+
+    notify_channel = str(form.get("notify_channel", "")).strip()
     _update_env_local(env_local_path, "CONTENTPIPE_NOTIFY_CHANNEL", notify_channel)
 
+    wechat_appid = str(form.get("wechat_appid", "")).strip()
+    if wechat_appid:
+        _update_env_local(env_local_path, "WECHAT_APPID", wechat_appid)
+
+    wechat_secret = str(form.get("wechat_secret", "")).strip()
+    if wechat_secret:
+        _update_env_local(env_local_path, "WECHAT_SECRET", wechat_secret)
+
     return HTMLResponse(
-        '<div class="text-green-400 text-sm mt-2">✅ 设置已保存</div>',
+        '<div class="text-green-400 text-sm mt-2">✅ 设置已保存（微信凭据已写入 .env.local）</div>',
     )
 
 
@@ -1855,12 +1876,13 @@ async def api_restart():
 
 
 def _update_env_local(env_path: Path, key: str, value: str):
-    """更新 .env.local 中的指定键值，保留其他行。"""
+    """更新 .env.local 中的指定键值，保留其他行，并同步当前进程环境。"""
     lines = []
     found = False
     if env_path.exists():
         for line in env_path.read_text(encoding="utf-8").splitlines():
-            if line.strip().startswith(f"{key}="):
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and stripped.split("=", 1)[0].strip() == key:
                 if value:
                     lines.append(f"{key}={value}")
                 found = True
@@ -1868,7 +1890,12 @@ def _update_env_local(env_path: Path, key: str, value: str):
                 lines.append(line)
     if not found and value:
         lines.append(f"{key}={value}")
-    env_path.write_text("\n".join(lines) + "\n" if lines else "", encoding="utf-8")
+    env_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+    if value:
+        os.environ[key] = value
+    else:
+        os.environ.pop(key, None)
 
 
 # ── 内部函数 ──────────────────────────────────────────────────

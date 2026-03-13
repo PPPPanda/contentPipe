@@ -311,6 +311,10 @@ ANTHROPIC_API_KEY=...
    ```
 
 3. `start.sh` 会自动加载 `.env.local`
+4. 也可以直接在 Web 设置页填写微信公众号凭据：
+   - ContentPipe 会把 `WECHAT_APPID` / `WECHAT_SECRET` 写入 `.env.local`
+   - 页面只显示 `*****` 掩码，不回显明文
+   - 设置页会显示当前服务出口 IP，方便复制到公众号后台白名单
 
 > ⚠️ **安全提醒**：
 > - `.env.local` 已加入 `.gitignore`，不会被提交

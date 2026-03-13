@@ -177,6 +177,12 @@
   "notify_channel": "1480223789626294466",
   "public_base_url": "",
   "wechat_author": "Mister Panda",
+  "wechat_appid_configured": true,
+  "wechat_secret_configured": true,
+  "wechat_appid_masked": "*****",
+  "wechat_secret_masked": "*****",
+  "public_ip": "14.127.15.58",
+  "public_ip_error": "",
   "scout": {
     "domain_keywords": ["AI", "科技"],
     "suggestions_count": 5
@@ -198,7 +204,9 @@
 }
 ```
 
-支持的顶层 key：`default_llm`, `gateway_url`, `llm_mode`, `gateway_agent_id`, `image_engine`, `llm_overrides`, `wechat_author`, `notify_channel`, `public_base_url`, `scout`
+支持的顶层 key：`default_llm`, `gateway_url`, `llm_mode`, `gateway_agent_id`, `image_engine`, `llm_overrides`, `wechat_author`, `wechat_appid`, `wechat_secret`, `notify_channel`, `public_base_url`, `scout`
+
+> `wechat_appid` / `wechat_secret` 不会写入 `pipeline.yaml`，而是写入 `.env.local` 并以环境变量方式读取；接口只返回“已配置”和掩码状态，不回显明文。
 
 **Response:**
 ```json
@@ -809,6 +817,12 @@
 ### `PUT /api/settings` / `POST /api/settings`
 
 保存设置（deep merge 到 `pipeline.local.yaml` + 环境变量）。
+
+其中：
+- 非敏感配置写入 `pipeline.yaml` / `pipeline.local.yaml`
+- `WECHAT_APPID` / `WECHAT_SECRET` 写入 `.env.local`
+- 设置页只显示 `*****` 掩码
+- 设置页会尝试显示当前服务出口 IP，供公众号白名单配置
 
 **Request:**
 ```json

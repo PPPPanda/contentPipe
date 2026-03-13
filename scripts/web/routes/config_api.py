@@ -13,6 +13,8 @@ from typing import Any
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 
+from web.env_utils import detect_public_ip, is_env_configured, masked_if_configured
+
 router = APIRouter()
 
 CONFIG_DIR = Path(__file__).parent.parent.parent.parent / "config"
@@ -56,6 +58,7 @@ async def api_get_config():
     """读取当前完整配置"""
     config = _load_config()
     pipeline = config.get("pipeline", {})
+    public_ip, public_ip_error = await detect_public_ip()
     return {
         "gateway_url": pipeline.get("gateway_url", "") or os.environ.get("OPENCLAW_GATEWAY_URL", ""),
         "llm_mode": pipeline.get("llm_mode", "gateway"),
@@ -66,6 +69,12 @@ async def api_get_config():
         "notify_channel": os.environ.get("CONTENTPIPE_NOTIFY_CHANNEL", ""),
         "public_base_url": os.environ.get("CONTENTPIPE_PUBLIC_BASE_URL", ""),
         "wechat_author": config.get("wechat", {}).get("author", ""),
+        "wechat_appid_configured": is_env_configured("WECHAT_APPID"),
+        "wechat_secret_configured": is_env_configured("WECHAT_SECRET"),
+        "wechat_appid_masked": masked_if_configured("WECHAT_APPID"),
+        "wechat_secret_masked": masked_if_configured("WECHAT_SECRET"),
+        "public_ip": public_ip or "",
+        "public_ip_error": public_ip_error or "",
         "scout": config.get("scout", {}),
     }
 
@@ -116,6 +125,10 @@ async def api_patch_config(request: Request):
         os.environ["CONTENTPIPE_NOTIFY_CHANNEL"] = str(body["notify_channel"])
     if "public_base_url" in body:
         os.environ["CONTENTPIPE_PUBLIC_BASE_URL"] = str(body["public_base_url"])
+    if "wechat_appid" in body and str(body["wechat_appid"]).strip():
+        _update_env_local("WECHAT_APPID", str(body["wechat_appid"]).strip())
+    if "wechat_secret" in body and str(body["wechat_secret"]).strip():
+        _update_env_local("WECHAT_SECRET", str(body["wechat_secret"]).strip())
 
     return {"ok": True, "message": "Config updated", "updated_keys": list(body.keys())}
 
@@ -317,17 +330,24 @@ def _has_openclaw_discord_token() -> bool:
 
 
 def _update_env_local(key: str, value: str) -> None:
-    """更新 .env.local 中的指定变量"""
+    """更新 .env.local 中的指定变量，并同步当前进程环境。"""
     env_path = Path(__file__).parent.parent.parent.parent / ".env.local"
     lines = []
     found = False
     if env_path.exists():
         for line in env_path.read_text(encoding="utf-8").splitlines():
-            if line.startswith(f"{key}="):
-                lines.append(f"{key}={value}")
+            stripped = line.strip()
+            if stripped and not stripped.startswith("#") and stripped.split("=", 1)[0].strip() == key:
+                if value:
+                    lines.append(f"{key}={value}")
                 found = True
             else:
                 lines.append(line)
-    if not found:
+    if not found and value:
         lines.append(f"{key}={value}")
-    env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    env_path.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
+
+    if value:
+        os.environ[key] = value
+    else:
+        os.environ.pop(key, None)

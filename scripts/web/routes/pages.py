@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from web.auth import AUTH_COOKIE, get_auth_token, hash_token, is_auth_enabled
+from web.env_utils import detect_public_ip, is_env_configured, masked_if_configured
 from web.run_manager import (
     list_runs, get_run, get_dashboard_stats,
     get_node_output, get_node_input,
@@ -204,9 +205,16 @@ async def preview_page(request: Request, run_id: str):
 async def settings_page(request: Request):
     """设置页"""
     settings = load_settings()
+    public_ip, public_ip_error = await detect_public_ip()
     return templates.TemplateResponse("settings.html", {
         "request": request,
         "settings": settings,
         "notify_channel": os.environ.get("CONTENTPIPE_NOTIFY_CHANNEL", ""),
+        "wechat_appid_set": is_env_configured("WECHAT_APPID"),
+        "wechat_secret_set": is_env_configured("WECHAT_SECRET"),
+        "wechat_appid_masked": masked_if_configured("WECHAT_APPID"),
+        "wechat_secret_masked": masked_if_configured("WECHAT_SECRET"),
+        "public_ip": public_ip or "",
+        "public_ip_error": public_ip_error or "",
         "page": "settings",
     })
