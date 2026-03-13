@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from typing import Any
 
@@ -19,8 +20,8 @@ import httpx
 from gateway_auth import build_gateway_headers
 from logutil import get_logger
 
-GATEWAY_URL = "http://localhost:18789"
-JIMENG_TAB_ID = "633824CAA4F7CEFB0C523AFB972A9E08"  # 默认即梦 tab
+GATEWAY_URL = os.environ.get("OPENCLAW_GATEWAY_URL", "http://localhost:18789")
+JIMENG_TAB_ID = os.environ.get("JIMENG_TAB_ID", "")  # 需在浏览器 Relay 中 attach 即梦 tab
 
 logger = get_logger(__name__)
 
