@@ -808,7 +808,7 @@ def _rollback_to_review_node(raw: dict, run_id: str, node_id: str) -> tuple[dict
 
     prev_node = interactive_nodes[idx - 1]
 
-    run_dir = Path(__file__).parent.parent.parent / "output" / "runs" / run_id
+    run_dir = Path(__file__).parent.parent.parent.parent / "output" / "runs" / run_id
     chat_file = run_dir / f"chat_{node_id}.json"
     if chat_file.exists():
         chat_file.unlink()
@@ -890,7 +890,7 @@ async def api_rollback_image_gen_to_director(run_id: str):
     if not raw:
         raise HTTPException(status_code=404, detail="Run not found")
 
-    run_dir = Path(__file__).parent.parent.parent / "output" / "runs" / run_id
+    run_dir = Path(__file__).parent.parent.parent.parent / "output" / "runs" / run_id
     raw["current_stage"] = "director"
     raw["status"] = "review"
     raw["_node_done"] = True
@@ -983,7 +983,7 @@ async def api_rollback_node(request: Request, run_id: str):
 
     # 清理从 target+1 到 current 的所有节点
     nodes_to_clear = interactive_nodes[tgt_idx + 1: cur_idx + 1]
-    run_dir = Path(__file__).parent.parent.parent / "output" / "runs" / run_id
+    run_dir = Path(__file__).parent.parent.parent.parent / "output" / "runs" / run_id
 
     state_cleanup = {
         "scout": ["topic", "writer_brief", "handoff_to_researcher", "reference_articles",
