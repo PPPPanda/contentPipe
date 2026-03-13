@@ -259,7 +259,12 @@ def _summary_formatter(run_id: str, state: Dict[str, Any]) -> str:
 # ── Discord 通知 ────────────────────────────────────────────────────
 
 def _get_discord_bot_token() -> str:
-    """从 openclaw.json 读取 Discord bot token"""
+    """获取 Discord bot token（env 优先，fallback 到 openclaw.json）"""
+    # 1. 环境变量（Docker / 云端部署推荐）
+    token = os.environ.get("DISCORD_BOT_TOKEN", "").strip()
+    if token:
+        return token
+    # 2. openclaw.json（本地 OpenClaw 部署）
     try:
         cfg_path = Path.home() / ".openclaw" / "openclaw.json"
         if cfg_path.exists():
@@ -272,7 +277,16 @@ def _get_discord_bot_token() -> str:
 
 
 def _get_discord_proxy() -> str:
-    """从 openclaw.json 读取 Discord proxy"""
+    """获取 Discord proxy（env 优先，fallback 到 openclaw.json）"""
+    # 1. 环境变量
+    proxy = os.environ.get("DISCORD_PROXY", "").strip()
+    if proxy:
+        return proxy
+    # 2. HTTPS_PROXY（通用代理）
+    proxy = os.environ.get("HTTPS_PROXY", "").strip() or os.environ.get("https_proxy", "").strip()
+    if proxy:
+        return proxy
+    # 3. openclaw.json
     try:
         cfg_path = Path.home() / ".openclaw" / "openclaw.json"
         if cfg_path.exists():
