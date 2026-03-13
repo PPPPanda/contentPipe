@@ -211,24 +211,38 @@ async function loadModelsForSettings() {
             var defaultSel = document.getElementById('settings-default-model');
             var currentVal = defaultSel.value;
             defaultSel.innerHTML = '';
+            var defaultMatched = false;
             data.models.forEach(function(m) {
                 var opt = document.createElement('option');
                 opt.value = m.id; opt.textContent = m.label;
-                if (m.id === currentVal) opt.selected = true;
+                if (m.id === currentVal) { opt.selected = true; defaultMatched = true; }
                 defaultSel.appendChild(opt);
             });
+            if (currentVal && !defaultMatched) {
+                var custom = document.createElement('option');
+                custom.value = currentVal; custom.textContent = '⚠️ ' + currentVal + ' (不在 Gateway 列表)';
+                custom.selected = true;
+                defaultSel.insertBefore(custom, defaultSel.firstChild);
+            }
             document.querySelectorAll('.settings-model-select').forEach(function(sel) {
                 var cur = sel.getAttribute('data-current') || sel.value;
                 var first = document.createElement('option');
                 first.value = ''; first.textContent = '使用默认';
                 sel.innerHTML = '';
                 sel.appendChild(first);
+                var matched = false;
                 data.models.forEach(function(m) {
                     var opt = document.createElement('option');
                     opt.value = m.id; opt.textContent = m.label;
-                    if (m.id === cur) opt.selected = true;
+                    if (m.id === cur) { opt.selected = true; matched = true; }
                     sel.appendChild(opt);
                 });
+                if (cur && !matched) {
+                    var custom = document.createElement('option');
+                    custom.value = cur; custom.textContent = '⚠️ ' + cur + ' (不在 Gateway 列表)';
+                    custom.selected = true;
+                    sel.insertBefore(custom, sel.children[1]);
+                }
             });
         }
     } catch(e) { console.error(e); }

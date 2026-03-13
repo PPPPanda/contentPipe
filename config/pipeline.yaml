@@ -19,10 +19,10 @@ pipeline:
 
   # 各角色模型覆盖
   llm_overrides:
-    scout: "anthropic/claude-sonnet-4-6"
-    researcher: "anthropic/claude-sonnet-4-6"
+    scout: "anthropic-sonnet/claude-sonnet-4-6"
+    researcher: "anthropic-sonnet/claude-sonnet-4-6"
     writer: "openai-codex/gpt-5.4"
-    de_ai_editor: "anthropic/claude-sonnet-4-6"
+    de_ai_editor: "anthropic-sonnet/claude-sonnet-4-6"
     director: "anthropic/claude-opus-4-6"
     director_refine: "dashscope/qwen3.5-plus"
 
