@@ -48,6 +48,32 @@ def _yaml_error_details(exc: Exception) -> list[str]:
     return details
 
 
+def _try_repair_truncated_yaml(text: str) -> str | None:
+    """尝试修复 LLM 输出被截断的 YAML。
+
+    常见情况：字符串在引号内被截断，或列表项缺少结尾。
+    策略：从末尾逐行删除直到 YAML 可以 parse。
+    """
+    lines = text.rstrip().split("\n")
+    if len(lines) < 5:
+        return None
+
+    # 尝试从末尾删 1~20 行
+    for trim in range(1, min(21, len(lines) - 3)):
+        candidate = "\n".join(lines[:-trim]).rstrip()
+        # 补全可能未闭合的引号
+        open_quotes = candidate.count('"') % 2
+        if open_quotes:
+            candidate += '"'
+        try:
+            parsed = yaml.safe_load(candidate)
+            if isinstance(parsed, dict) and len(parsed) >= 3:
+                return candidate + "\n"
+        except Exception:
+            continue
+    return None
+
+
 def _json_error_details(exc: json.JSONDecodeError, text: str) -> list[str]:
     details = [f"line {exc.lineno}, column {exc.colno}: {exc.msg}"]
     lines = text.splitlines()
@@ -76,7 +102,15 @@ def validate_topic_yaml(text: str) -> ValidationResult:
     try:
         parsed = yaml.safe_load(raw)
     except Exception as exc:
-        return ValidationResult(ok=False, message="topic.yaml is not valid YAML", details=_yaml_error_details(exc))
+        repaired = _try_repair_truncated_yaml(raw)
+        if repaired:
+            try:
+                parsed = yaml.safe_load(repaired)
+                raw = repaired
+            except Exception:
+                return ValidationResult(ok=False, message="topic.yaml is not valid YAML (repair failed)", details=_yaml_error_details(exc))
+        else:
+            return ValidationResult(ok=False, message="topic.yaml is not valid YAML", details=_yaml_error_details(exc))
 
     details: list[str] = []
     if not isinstance(parsed, dict):
@@ -115,7 +149,16 @@ def validate_research_yaml(text: str) -> ValidationResult:
     try:
         parsed = yaml.safe_load(raw)
     except Exception as exc:
-        return ValidationResult(ok=False, message="research.yaml is not valid YAML", details=_yaml_error_details(exc))
+        # 尝试自动修复截断的 YAML
+        repaired = _try_repair_truncated_yaml(raw)
+        if repaired:
+            try:
+                parsed = yaml.safe_load(repaired)
+                raw = repaired  # 用修复后的版本继续校验
+            except Exception:
+                return ValidationResult(ok=False, message="research.yaml is not valid YAML (repair failed)", details=_yaml_error_details(exc))
+        else:
+            return ValidationResult(ok=False, message="research.yaml is not valid YAML", details=_yaml_error_details(exc))
 
     details: list[str] = []
     if not isinstance(parsed, dict):
