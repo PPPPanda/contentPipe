@@ -218,12 +218,7 @@ WECHAT_SECRET=你的AppSecret</pre>
                     <p class="text-xs text-slate-500 mt-2">未配置时 Publisher 会本地保存 HTML 产物，不会创建公众号草稿。</p>
                 </div>
 
-                <!-- 服务端口 -->
-                <div>
-                    <label class="block text-sm text-slate-300 mb-1.5">🌐 服务端口</label>
-                    <input type="number" name="port" value="{{ port }}"
-                           class="w-32 bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white text-sm focus:border-cyan-500 focus:outline-none">
-                </div>
+                <!-- 服务端口已移除：由 start.sh / CONTENTPIPE_PORT 环境变量控制 -->
             </div>
 
             <div class="flex justify-between mt-6">
