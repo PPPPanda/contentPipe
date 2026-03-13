@@ -168,11 +168,16 @@
         </div>
     </div>
 
-    <!-- 保存 -->
+    <!-- 保存 & 重启 -->
     <div class="flex items-center gap-4">
         <button type="submit"
                 class="px-6 py-2.5 bg-sky-600 text-white rounded-lg hover:bg-sky-500 transition font-medium">
             💾 保存
+        </button>
+        <button type="button" onclick="restartService()"
+                class="px-4 py-2 bg-amber-700 hover:bg-amber-600 text-white text-sm rounded-lg transition"
+                id="restart-btn">
+            🔄 重启服务
         </button>
         <div id="save-result"></div>
     </div>
@@ -271,6 +276,35 @@ function pickChannel(sel) {
     if (sel.value) {
         document.getElementById('settings-notify-channel').value = sel.value;
     }
+}
+
+async function restartService() {
+    if (!confirm('确定重启 ContentPipe 服务？正在执行的 Pipeline 会中断。')) return;
+    var btn = document.getElementById('restart-btn');
+    var result = document.getElementById('save-result');
+    btn.disabled = true; btn.textContent = '重启中...';
+    result.innerHTML = '<span class="text-xs text-amber-400">🔄 正在重启...</span>';
+    try {
+        await fetch('/api/restart', {method: 'POST'});
+    } catch(e) { /* 预期：服务关闭导致连接断开 */ }
+    // 轮询等待服务恢复
+    var attempts = 0;
+    var poll = setInterval(async function() {
+        attempts++;
+        try {
+            var resp = await fetch('/api/health', {signal: AbortSignal.timeout(2000)});
+            if (resp.ok) {
+                clearInterval(poll);
+                result.innerHTML = '<span class="text-xs text-green-400">✅ 重启成功</span>';
+                btn.disabled = false; btn.textContent = '🔄 重启服务';
+            }
+        } catch(e) { /* still restarting */ }
+        if (attempts > 15) {
+            clearInterval(poll);
+            result.innerHTML = '<span class="text-xs text-red-400">⚠️ 重启超时，请手动检查</span>';
+            btn.disabled = false; btn.textContent = '🔄 重启服务';
+        }
+    }, 2000);
 }
 
 // 页面加载时自动刷新模型列表

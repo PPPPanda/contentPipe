@@ -14,10 +14,29 @@ from typing import Optional
 from gateway_auth import build_gateway_headers
 from logutil import get_logger
 
-# 配置（可被环境变量覆盖）
-GATEWAY_URL = os.environ.get("OPENCLAW_GATEWAY_URL", "http://localhost:18789")
-NOTIFY_CHANNEL = os.environ.get("CONTENTPIPE_NOTIFY_CHANNEL", "")
-PUBLIC_BASE_URL = os.environ.get("CONTENTPIPE_PUBLIC_BASE_URL", "http://localhost:8765").rstrip("/")
+# 动态读取配置 — 支持运行时修改，无需重启
+def _get_gateway_url() -> str:
+    return os.environ.get("OPENCLAW_GATEWAY_URL", "") or _read_config_val("gateway_url", "http://localhost:18789")
+
+def _get_notify_channel() -> str:
+    return os.environ.get("CONTENTPIPE_NOTIFY_CHANNEL", "") or _read_config_val("notify_channel", "")
+
+def _get_public_base_url() -> str:
+    return os.environ.get("CONTENTPIPE_PUBLIC_BASE_URL", "http://localhost:8765").rstrip("/")
+
+def _read_config_val(key: str, default: str = "") -> str:
+    """从 pipeline.yaml 读取配置值（轻量级，每次调用时读）"""
+    try:
+        import yaml
+        from pathlib import Path
+        cfg_path = Path(__file__).parent.parent.parent / "config" / "pipeline.yaml"
+        if cfg_path.exists():
+            cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8")) or {}
+            return str(cfg.get("pipeline", {}).get(key, default))
+    except Exception:
+        pass
+    return default
+
 logger = get_logger(__name__)
 
 # 节点 emoji
@@ -37,7 +56,7 @@ NODE_EMOJI = {
 async def notify_discord(
     message: str,
     *,
-    channel: str = NOTIFY_CHANNEL,
+    channel: str = "",
     run_id: Optional[str] = None,
     node: Optional[str] = None,
     buttons: bool = False,
@@ -46,13 +65,16 @@ async def notify_discord(
 
     Args:
         message: 消息内容
-        channel: 目标频道 ID
+        channel: 目标频道 ID（空则从配置/env 动态读取）
         run_id: 关联的 Run ID（用于按钮回调）
         node: 当前节点（用于 emoji）
         buttons: 是否添加审核按钮
     """
     if not channel:
+        channel = _get_notify_channel()
+    if not channel:
         return False
+    gateway_url = _get_gateway_url()
     try:
         async with httpx.AsyncClient(timeout=10) as client:
             payload = {
@@ -63,7 +85,7 @@ async def notify_discord(
             }
 
             resp = await client.post(
-                f"{GATEWAY_URL}/api/message",
+                f"{gateway_url}/api/message",
                 json=payload,
                 headers=build_gateway_headers(),
             )
@@ -81,7 +103,7 @@ async def notify_node_complete(run_id: str, node: str, title: str = "", summary:
         msg += f"\n> {title}"
     if summary:
         msg += f"\n{summary[:200]}"
-    msg += f"\n🔗 审核: {PUBLIC_BASE_URL}/runs/{run_id}/review?node={node}"
+    msg += f"\n🔗 审核: {_get_public_base_url()}/runs/{run_id}/review?node={node}"
     await notify_discord(msg, run_id=run_id, node=node)
 
 
@@ -91,7 +113,7 @@ async def notify_review_needed(run_id: str, node: str, output_summary: str = "")
     msg = f"⏸️ **{emoji} {node} 等待审核**"
     if output_summary:
         msg += f"\n{output_summary[:300]}"
-    msg += f"\n\n👉 {PUBLIC_BASE_URL}/runs/{run_id}/review?node={node}"
+    msg += f"\n\n👉 {_get_public_base_url()}/runs/{run_id}/review?node={node}"
     await notify_discord(msg, run_id=run_id, node=node, buttons=True)
 
 
@@ -100,7 +122,7 @@ async def notify_run_complete(run_id: str, title: str = ""):
     msg = f"✅ **Pipeline 完成**"
     if title:
         msg += f": {title}"
-    msg += f"\n📱 预览: {PUBLIC_BASE_URL}/runs/{run_id}/preview"
+    msg += f"\n📱 预览: {_get_public_base_url()}/runs/{run_id}/preview"
     await notify_discord(msg, run_id=run_id)
 
 
@@ -109,5 +131,5 @@ async def notify_run_failed(run_id: str, error: str = ""):
     msg = f"❌ **Pipeline 失败**"
     if error:
         msg += f"\n```{error[:200]}```"
-    msg += f"\n🔗 {PUBLIC_BASE_URL}/runs/{run_id}"
+    msg += f"\n🔗 {_get_public_base_url()}/runs/{run_id}"
     await notify_discord(msg, run_id=run_id)

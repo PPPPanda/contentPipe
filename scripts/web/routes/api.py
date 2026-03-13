@@ -1309,7 +1309,7 @@ async def api_update_settings_form(request: Request):
     _update_env_local(env_local_path, "CONTENTPIPE_NOTIFY_CHANNEL", notify_channel)
 
     return HTMLResponse(
-        '<div class="text-green-400 text-sm mt-2">✅ 设置已保存（通知频道需重启生效）</div>',
+        '<div class="text-green-400 text-sm mt-2">✅ 设置已保存</div>',
     )
 
 
@@ -1642,6 +1642,27 @@ async def api_setup_save(request: Request):
     setup_flag.write_text("configured\n")
 
     return JSONResponse({"ok": True})
+
+
+@router.post("/restart")
+async def api_restart():
+    """重启 ContentPipe 服务（通过 start.sh restart）。"""
+    import asyncio
+    start_script = Path(__file__).parent.parent.parent.parent / "start.sh"
+    if not start_script.exists():
+        return JSONResponse({"ok": False, "error": "start.sh not found"}, status_code=500)
+
+    async def _do_restart():
+        await asyncio.sleep(0.5)  # 先让 response 发出去
+        subprocess.Popen(
+            [str(start_script), "restart"],
+            cwd=str(start_script.parent),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    asyncio.get_event_loop().create_task(_do_restart())
+    return JSONResponse({"ok": True, "message": "restarting"})
 
 
 def _update_env_local(env_path: Path, key: str, value: str):
