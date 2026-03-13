@@ -288,15 +288,25 @@ async def api_upload_placement_image(run_id: str, request: Request):
 
     # 更新 generated_images.json
     gi_path = d / "generated_images.json"
-    gi = {}
+    gi_list: list = []
     if gi_path.exists():
         try:
-            gi = json.loads(gi_path.read_text(encoding="utf-8"))
+            raw = json.loads(gi_path.read_text(encoding="utf-8"))
+            gi_list = raw if isinstance(raw, list) else []
         except Exception:
-            gi = {}
+            pass
 
-    gi[pid] = {"source": "upload", "filename": dest.name, "size": len(data)}
-    gi_path.write_text(json.dumps(gi, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 更新或追加
+    found = False
+    for item in gi_list:
+        if isinstance(item, dict) and item.get("placement_id") == pid:
+            item.update({"source": "upload", "file_path": str(dest), "filename": dest.name, "success": True, "error": ""})
+            found = True
+            break
+    if not found:
+        gi_list.append({"placement_id": pid, "source": "upload", "file_path": str(dest), "filename": dest.name, "success": True})
+
+    gi_path.write_text(json.dumps(gi_list, ensure_ascii=False, indent=2), encoding="utf-8")
 
     return {"ok": True, "placement_id": pid, "filename": dest.name, "size": len(data)}
 
