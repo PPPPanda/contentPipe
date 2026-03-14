@@ -299,16 +299,32 @@ async function testGateway() {
         const data = await resp.json();
 
         if (data.ok) {
+            const checks = (data.preflight && data.preflight.checks) ? data.preflight.checks : [];
+            const ready = !!data.ready;
+            const checkHtml = checks.length ? `
+                <div class="mt-3 pt-3 border-t border-white/10 space-y-2">
+                    <p class="text-[11px] text-slate-500 uppercase tracking-wider">P0 安装预检</p>
+                    ${checks.map(ch => `
+                        <div class="rounded-lg px-3 py-2 ${ch.ok ? 'bg-green-900/10 border border-green-700/20' : (ch.warning ? 'bg-amber-900/10 border border-amber-700/20' : 'bg-red-900/10 border border-red-700/20')}">
+                            <div class="text-xs ${ch.ok ? 'text-green-300' : (ch.warning ? 'text-amber-300' : 'text-red-300')}">
+                                ${ch.ok ? '✅' : (ch.warning ? '⚠️' : '❌')} ${ch.label}
+                            </div>
+                            <div class="text-[11px] text-slate-400 mt-1 break-all">${ch.detail || ''}</div>
+                        </div>
+                    `).join('')}
+                </div>` : '';
+
             result.innerHTML = `
-                <div class="p-3 rounded-lg bg-green-900/20 border border-green-700/30">
-                    <p class="text-xs text-green-300">✅ 连接成功</p>
+                <div class="p-3 rounded-lg ${ready ? 'bg-green-900/20 border border-green-700/30' : 'bg-amber-900/20 border border-amber-700/30'}">
+                    <p class="text-xs ${ready ? 'text-green-300' : 'text-amber-300'}">${ready ? '✅ Gateway 与 blank-agent 配置就绪' : '⚠️ Gateway 可连接，但安装预检未通过'}</p>
                     <p class="text-xs text-slate-400 mt-1">
                         可用模型: ${data.model_count} 个
                         ${data.channel_count > 0 ? ' · 通知频道: ' + data.channel_count + ' 个' : ''}
                     </p>
+                    ${checkHtml}
                 </div>`;
-            gatewayOk = true;
-            document.getElementById('next-1').disabled = false;
+            gatewayOk = ready;
+            document.getElementById('next-1').disabled = !ready;
         } else {
             result.innerHTML = `
                 <div class="p-3 rounded-lg bg-red-900/20 border border-red-700/30">
@@ -316,6 +332,7 @@ async function testGateway() {
                     <p class="text-xs text-slate-400 mt-1">${data.error || '无法访问 Gateway'}</p>
                 </div>`;
             gatewayOk = false;
+            document.getElementById('next-1').disabled = true;
         }
     } catch (e) {
         result.innerHTML = `

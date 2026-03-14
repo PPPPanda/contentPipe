@@ -7,12 +7,14 @@ ContentPipe Plugin — REST API 路由
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import os
 import re
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -1529,9 +1531,170 @@ async def api_update_settings_form(request: Request):
 # ── Setup Wizard API ─────────────────────────────────────────
 
 
+def _discover_model_keys_local() -> list[str]:
+    try:
+        result = subprocess.run(
+            ["openclaw", "models", "list", "--json"],
+            capture_output=True, text=True, timeout=15,
+            env={**os.environ, "NO_COLOR": "1"},
+        )
+        if result.returncode != 0:
+            return []
+        raw = json.loads(result.stdout)
+        raw_models = raw.get("models", raw) if isinstance(raw, dict) else raw
+        if not isinstance(raw_models, list):
+            return []
+        keys = []
+        for m in raw_models:
+            mid = m.get("key") or m.get("model") or m.get("id") or m.get("name", "")
+            if mid:
+                keys.append(str(mid))
+        return keys
+    except Exception:
+        return []
+
+
+def _setup_preflight_agent_id() -> str:
+    settings = load_settings()
+    return settings.get("pipeline", {}).get("gateway_agent_id", "contentpipe-blank") or "contentpipe-blank"
+
+
+def _is_probably_local_gateway(gateway_url: str) -> bool:
+    try:
+        host = (urlparse(gateway_url).hostname or "").strip().lower()
+    except Exception:
+        return False
+    if host in {"localhost", "127.0.0.1", "::1"}:
+        return True
+    try:
+        ip = ipaddress.ip_address(host)
+        return ip.is_loopback
+    except Exception:
+        return False
+
+
+async def _run_setup_preflight(gateway_url: str) -> dict[str, Any]:
+    import httpx
+    from gateway_auth import build_gateway_headers
+
+    checks: list[dict[str, Any]] = []
+    agent_id = _setup_preflight_agent_id()
+    skills_dir = (Path(__file__).parent.parent.parent.parent / "skills").resolve()
+
+    # P0-1: blank agent exists
+    agent_exists = False
+    agents_error = ""
+    try:
+        result = subprocess.run(
+            ["openclaw", "config", "get", "agents.list", "--json"],
+            capture_output=True, text=True, timeout=15,
+            env={**os.environ, "NO_COLOR": "1"},
+        )
+        if result.returncode == 0:
+            items = json.loads(result.stdout)
+            agent_exists = any(item.get("id") == agent_id for item in items)
+        else:
+            agents_error = (result.stderr or result.stdout or "openclaw config get agents.list failed")[:200]
+    except Exception as e:
+        agents_error = str(e)[:200]
+    checks.append({
+        "id": "agent_exists",
+        "label": f"blank agent 已存在（{agent_id}）",
+        "ok": agent_exists,
+        "detail": "已找到 agent 配置" if agent_exists else (agents_error or "未找到 contentpipe-blank，请先执行 ./start.sh install-agent"),
+    })
+
+    # P0-2: gateway_agent_id can be routed
+    route_ok = False
+    route_detail = ""
+    probe_models = _discover_model_keys_local()
+    probe_model = probe_models[0] if probe_models else ""
+    if not probe_model:
+        route_detail = "未找到可用模型，无法做路由探测"
+    else:
+        try:
+            async with httpx.AsyncClient(timeout=20) as client:
+                resp = await client.post(
+                    f"{gateway_url}/v1/chat/completions",
+                    headers=build_gateway_headers({"X-OpenClaw-Agent-Id": agent_id}),
+                    json={
+                        "model": probe_model,
+                        "messages": [{"role": "user", "content": "Reply with exactly: OK"}],
+                        "max_tokens": 8,
+                    },
+                )
+                route_ok = resp.status_code == 200
+                route_detail = f"HTTP {resp.status_code} · model={probe_model}"
+                if not route_ok:
+                    route_detail = f"{route_detail} · {(resp.text or '')[:160]}"
+        except Exception as e:
+            route_detail = str(e)[:200]
+    checks.append({
+        "id": "agent_route",
+        "label": f"Gateway 可路由到 agent（{agent_id}）",
+        "ok": route_ok,
+        "detail": route_detail or "路由探测失败",
+    })
+
+    # P0-3: skills.load.extraDirs contains ContentPipe skills path
+    extra_dirs_ok = False
+    extra_dirs_detail = ""
+    extra_dirs: list[str] = []
+    try:
+        result = subprocess.run(
+            ["openclaw", "config", "get", "skills.load.extraDirs", "--json"],
+            capture_output=True, text=True, timeout=15,
+            env={**os.environ, "NO_COLOR": "1"},
+        )
+        if result.returncode == 0:
+            loaded = json.loads(result.stdout)
+            if isinstance(loaded, list):
+                extra_dirs = [str(Path(p).resolve()) for p in loaded if p]
+                extra_dirs_ok = str(skills_dir) in extra_dirs
+                extra_dirs_detail = f"已注册 {len(extra_dirs)} 个目录"
+            else:
+                extra_dirs_detail = "skills.load.extraDirs 不是数组"
+        else:
+            extra_dirs_detail = (result.stderr or result.stdout or "读取 skills.load.extraDirs 失败")[:200]
+    except Exception as e:
+        extra_dirs_detail = str(e)[:200]
+    checks.append({
+        "id": "skills_extra_dirs",
+        "label": "skills.load.extraDirs 已包含 ContentPipe skills 目录",
+        "ok": extra_dirs_ok,
+        "detail": extra_dirs_detail if extra_dirs_ok else (extra_dirs_detail or f"缺少 {skills_dir}"),
+    })
+
+    # P0-4: path exists on gateway host (strict for local gateways; remote gateway = unverifiable warning)
+    local_gateway = _is_probably_local_gateway(gateway_url)
+    skills_path_exists = skills_dir.exists() and skills_dir.is_dir()
+    path_ok = skills_path_exists if local_gateway else True
+    path_detail = ""
+    if local_gateway:
+        path_detail = f"本机路径: {skills_dir}" if skills_path_exists else f"本机路径不存在: {skills_dir}"
+    else:
+        path_detail = f"远端 Gateway（{gateway_url}）无法直接验证宿主机路径；请确认 Gateway 所在机器也有此目录"
+    checks.append({
+        "id": "skills_path_exists",
+        "label": "ContentPipe skills 路径在 Gateway 宿主上存在",
+        "ok": path_ok,
+        "detail": path_detail,
+        "warning": not local_gateway,
+    })
+
+    blocking_checks = [c for c in checks if not c.get("warning")]
+    preflight_ok = all(c["ok"] for c in blocking_checks)
+    return {
+        "ok": preflight_ok,
+        "agent_id": agent_id,
+        "skills_dir": str(skills_dir),
+        "checks": checks,
+    }
+
+
 @router.post("/setup/test-gateway")
 async def api_setup_test_gateway(request: Request):
-    """测试 Gateway 连接，返回模型数量和频道数量。"""
+    """测试 Gateway 连接，并执行 P0 安装预检。"""
     import httpx
 
     body = await request.json()
@@ -1558,18 +1721,9 @@ async def api_setup_test_gateway(request: Request):
 
             # 2. 模型列表 — 通过 CLI
             try:
-                result = subprocess.run(
-                    ["openclaw", "models", "list", "--json"],
-                    capture_output=True, text=True, timeout=15,
-                    env={**os.environ, "NO_COLOR": "1"},
-                )
-                if result.returncode == 0:
-                    import json as _json
-                    raw = _json.loads(result.stdout)
-                    raw_models = raw.get("models", raw) if isinstance(raw, dict) else raw
-                    model_count = len(raw_models) if isinstance(raw_models, list) else 0
+                model_count = len(_discover_model_keys_local())
             except Exception:
-                model_count = -1  # 无法获取但不阻止
+                model_count = -1
 
             # 3. 频道 — 从 openclaw.json 检测已配置的 providers
             try:
@@ -1589,10 +1743,14 @@ async def api_setup_test_gateway(request: Request):
     except Exception as e:
         return JSONResponse({"ok": False, "error": str(e)})
 
+    preflight = await _run_setup_preflight(gateway_url)
+
     return JSONResponse({
         "ok": True,
+        "ready": preflight["ok"],
         "model_count": model_count,
         "channel_count": channel_count,
+        "preflight": preflight,
     })
 
 

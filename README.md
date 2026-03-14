@@ -390,6 +390,14 @@ CONTENTPIPE_AGENT_MODEL=anthropic-sonnet/claude-sonnet-4-6 \
 
 ### 6.1.2 首次部署 Checklist（推荐照着跑）
 
+> 新版 Setup 向导 Step 1 已加入 **P0 安装预检**，会检查：
+> - `contentpipe-blank` agent 是否存在
+> - Gateway 是否能路由到该 agent
+> - `skills.load.extraDirs` 是否包含 ContentPipe skills 目录
+> - （本机 Gateway 时）skills 路径是否真实存在
+> 
+> 如果这些检查不过，向导不会放行到下一步，避免首个 run 在 scout 阶段直接翻车。
+
 ```bash
 cp .env.example .env
 # 编辑 .env，至少填 CONTENTPIPE_AUTH_TOKEN / OPENCLAW_GATEWAY_URL
