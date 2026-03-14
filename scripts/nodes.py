@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import time
+import uuid
 from datetime import datetime
 from pathlib import Path
 
@@ -56,6 +57,67 @@ def _strip_code_fence(text: str) -> str:
     if m2:
         return m2.group(1)
     return text
+
+
+def _sanitize_subtitle(text: str) -> str:
+    text = (text or '').strip()
+    if not text:
+        return ''
+    text = _strip_code_fence(text)
+    text = text.strip().strip('"').strip("'")
+    banned_prefixes = [
+        '这篇文章', '本文将', '本文会', '下面带你', '下面我们', '主力推荐',
+        '用', '采用', '不装不端着', '从选题到发布', '文章将', '本篇文章',
+    ]
+    for prefix in banned_prefixes:
+        if text.startswith(prefix):
+            text = text[len(prefix):].lstrip('：:，,。 ')
+    text = re.sub(r'\s+', ' ', text)
+    return text[:120].strip('，,。；;：: ')
+
+
+def _fallback_subtitle_from_article(article_text: str, title: str = '') -> str:
+    lines = []
+    for raw in (article_text or '').splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        if line.startswith('#'):
+            continue
+        if line.startswith('>'):
+            continue
+        lines.append(line)
+    candidate = lines[0] if lines else ''
+    candidate = re.sub(r'^(这篇文章|本文将|本文会|下面带你|下面我们)[：:，,。 ]*', '', candidate)
+    candidate = candidate[:120].strip('，,。；;：: ')
+    if candidate:
+        return candidate
+    return _sanitize_subtitle(title) or '一篇关于安装、配置与上手使用的实用教程'
+
+
+def generate_article_subtitle(state: ContentState, article_text: str, title: str = '') -> str:
+    """由 Writer 阶段显式生成发布摘要（读者可见 digest）。"""
+    prompt = _read_prompt('writer-subtitle.md')
+    context = f"文章标题: {title}\n\n--- 最终正文 ---\n{article_text}"
+    cfg = load_pipeline_config().get('pipeline', {})
+    try:
+        result = call_llm(
+            prompt,
+            context,
+            model='dashscope/qwen3.5-flash',
+            max_tokens=400,
+            response_format='json',
+            system_prompt=prompt,
+            gateway_session_key=_node_session_key(state, 'writer', f'subtitle-{uuid.uuid4().hex[:8]}'),
+            gateway_agent_id=cfg.get('gateway_agent_id') if cfg.get('llm_mode') == 'gateway' else None,
+        )
+        data = json.loads(_strip_code_fence(result))
+        subtitle = _sanitize_subtitle(str(data.get('subtitle', '') or ''))
+        if subtitle:
+            return subtitle
+    except Exception:
+        pass
+    return _fallback_subtitle_from_article(article_text, title)
 
 # ── 配置 ──────────────────────────────────────────────────────
 
@@ -662,8 +724,12 @@ def writer_node(state: ContentState) -> ContentState:
     )
 
     de_ai_result = (de_ai_file or de_ai_reply).strip()
+    subtitle = generate_article_subtitle(state, de_ai_result or content, article.get("title", ""))
 
     state["article_edited"] = de_ai_result
+    if isinstance(state.get("article"), dict):
+        state["article"]["subtitle"] = subtitle
+        state["article"]["word_count"] = len(de_ai_result)
     _save_artifact(state["run_id"], "article_edited.md", de_ai_result)
 
     state["current_stage"] = "writer"
@@ -709,6 +775,9 @@ def de_ai_editor_node(state: ContentState) -> ContentState:
     result = (file_content or reply).strip()
 
     state["article_edited"] = result
+    if isinstance(state.get("article"), dict):
+        state["article"]["subtitle"] = generate_article_subtitle(state, result or article.get("content", ""), state.get("article", {}).get("title", ""))
+        state["article"]["word_count"] = len(result)
     state["current_stage"] = "de_ai_editor"
     _save_artifact(state["run_id"], "article_edited.md", result)
     _save_state(state)
@@ -1511,7 +1580,7 @@ def _publish_wechat(state: dict, config: dict) -> dict:
         media_id = wechat_create_draft(token, {
             "title": article.get("title", ""),
             "content_html": html,
-            "subtitle": article.get("subtitle", "") or topic.get("summary", "")[:120],
+            "subtitle": article.get("subtitle", ""),
             "author": wechat_config.get("author", "ContentPipe"),
             "thumb_media_id": thumb_media_id,
         })

@@ -204,7 +204,8 @@ contentpipe:{run_id}:formatter:main
   - `writer:main` 为连续主 session
   - `writer-structure.md` 对应的结构 helper 每次 fresh session 运行
   - 结构 helper 负责把正式正文落到 `article_edited.md`
-  - Python 再读回正文、写 `.prev`、更新 `state.article_edited`、刷新左侧 UI
+  - Writer 额外通过 `writer-subtitle.md` 生成面向发布的 `article.subtitle`（微信公众号草稿 digest）
+  - Python 再读回正文、写 `.prev`、更新 `state.article_edited` / `state.article.subtitle`、刷新左侧 UI
 - **Publisher**
   - Web pipeline 现在执行真实 `publisher_node`，不再只是 stub completed
   - 发布后会写入 `publish_result.json` 与 `state.publish_result`

@@ -170,7 +170,7 @@ def publish_wechat(output_dir: Path) -> dict:
         media_id = wechat_create_draft(token, {
             "title": article.get("title", ""),
             "content_html": html,
-            "subtitle": article.get("subtitle", "") or (state.get("topic", {}).get("summary", "")[:120]),
+            "subtitle": article.get("subtitle", ""),
             "author": os.environ.get("WECHAT_AUTHOR", "ContentPipe"),
             "thumb_media_id": thumb_media_id,
         })

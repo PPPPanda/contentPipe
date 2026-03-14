@@ -226,7 +226,7 @@ async def _run_writer_structure_helper(run_id: str, state: dict, raw_output: str
 async def _handle_writer_review_chat(run_id: str, state: dict, user_msg: str, gateway_agent_id: str | None) -> tuple[str, bool, str]:
     from tools import call_llm
     from web.run_manager import get_chat_history, save_chat_message, _save_state
-    from nodes import _get_model, _save_artifact
+    from nodes import _get_model, _save_artifact, generate_article_subtitle
 
     article_path = Path(__file__).parent.parent.parent.parent / "output" / "runs" / run_id / "article_edited.md"
     if article_path.exists():
@@ -286,6 +286,7 @@ async def _handle_writer_review_chat(run_id: str, state: dict, user_msg: str, ga
         state["article_edited"] = after_article
         if "article" in state and isinstance(state["article"], dict):
             state["article"]["word_count"] = len(after_article)
+            state["article"]["subtitle"] = generate_article_subtitle(state, after_article, article_title)
         _save_state(state)
     elif should_update:
         reply_visible = (reply_visible + "\n\n（本轮正文没有成功提交到正式产物文件，系统未接受这次修改。）").strip()
@@ -468,7 +469,7 @@ async def api_get_article(run_id: str):
 async def api_save_article(run_id: str, body: dict):
     """保存用户编辑的文章（以用户改的为准）"""
     from web.run_manager import _load_raw_state, _save_state
-    from nodes import _save_artifact
+    from nodes import _save_artifact, generate_article_subtitle
     content = body.get("content", "")
     if not content:
         raise HTTPException(status_code=400, detail="Content is empty")
@@ -484,9 +485,11 @@ async def api_save_article(run_id: str, body: dict):
 
     # 更新 article_edited（下游节点读这个）
     state["article_edited"] = content
-    # 同步更新 article 的 word_count
+    # 同步更新 article 的 word_count + subtitle
     if "article" in state and isinstance(state["article"], dict):
         state["article"]["word_count"] = len(content)
+        article_title = state.get("article", {}).get("title", "") or state.get("topic", {}).get("title", "")
+        state["article"]["subtitle"] = generate_article_subtitle(state, content, article_title)
     _save_state(state)
     _save_artifact(run_id, "article_edited.md", content)
     return {"ok": True, "word_count": len(content)}
