@@ -238,18 +238,22 @@
                         </div>
                         <p class="text-xs text-amber-300/90 mb-1">🪪 比例 {{ cover.aspect_ratio | default('2.35:1') }}</p>
                         {% if cover.title %}<p class="text-xs text-green-400/80 mb-1">🏷️ {{ cover.title }}</p>{% endif %}
-                        <p class="text-xs text-slate-400 mb-1">🎯 {{ cover.purpose | default('封面入口视觉') }}</p>
                         {% set cover_desc = cover.description | default('') %}
+                        {% set cover_summary = cover_desc | replace('封面主视觉：', '') | replace('主视觉：', '') | replace('封面：', '') %}
+                        {% if cover_summary %}
+                        <p class="text-xs text-slate-300 mb-1">📝 {{ cover_summary[:80] }}{% if cover_summary|length > 80 %}…{% endif %}</p>
+                        {% endif %}
+                        <p class="text-xs text-slate-500 mb-1">🎯 目标：{{ cover.purpose | default('封面入口视觉') }}</p>
                         {% if cover_desc|length > 140 %}
                         <details class="text-xs text-slate-500 leading-relaxed group">
                             <summary class="cursor-pointer list-none text-slate-500 hover:text-slate-300">
-                                {{ cover_desc[:140] }}…
+                                创作说明
                                 <span class="text-sky-400 ml-1 group-open:hidden">展开</span>
                                 <span class="text-sky-400 ml-1 hidden group-open:inline">收起</span>
                             </summary>
                             <p class="mt-2 whitespace-pre-wrap break-words">{{ cover_desc }}</p>
                         </details>
-                        {% else %}
+                        {% elif cover_desc %}
                         <p class="text-xs text-slate-500 leading-relaxed whitespace-pre-wrap break-words">{{ cover_desc }}</p>
                         {% endif %}
                     </div>
