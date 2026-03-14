@@ -357,6 +357,14 @@ ANTHROPIC_API_KEY=...
 ./start.sh install-agent
 ```
 
+`start.sh` 会自动优先使用以下 Python 解释器：
+1. `CONTENTPIPE_PYTHON`（若显式指定）
+2. `.venv/bin/python`
+3. `venv/bin/python`
+4. `python3`
+
+启动前会检查当前解释器是否可导入 `uvicorn`；如果不行，会直接报错并提示你切换到项目 venv，而不是用系统 Python 悄悄启动失败。
+
 ### 6.1.1 一键注册 `contentpipe-blank`（Gateway 模式必做）
 
 如果你要使用 `llm_mode=gateway` 的低污染 blank-agent 执行平面，先运行：
@@ -433,8 +441,10 @@ docker compose up -d --build
 
 ```bash
 cd scripts
-python3 -m uvicorn web.app:app --host 0.0.0.0 --port 8765
+../.venv/bin/python -m uvicorn web.app:app --host 0.0.0.0 --port 8765
 ```
+
+如果你的虚拟环境不在 `.venv/`，请替换成对应路径。不要默认依赖系统 `python3`，否则在云端很容易出现 `uvicorn` 模块缺失。
 
 ### 6.4 健康检查
 

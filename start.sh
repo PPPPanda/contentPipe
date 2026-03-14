@@ -25,6 +25,41 @@ CONTENTPIPE_AGENT_MODEL="${CONTENTPIPE_AGENT_MODEL:-}"
 CONTENTPIPE_SKILLS_DIR="${CONTENTPIPE_SKILLS_DIR:-$PLUGIN_DIR/skills}"
 CONTENTPIPE_AGENT_SKILLS_JSON="${CONTENTPIPE_AGENT_SKILLS_JSON:-[\"contentpipe-wechat-reader\",\"contentpipe-url-reader\",\"contentpipe-web-research\",\"contentpipe-social-research\",\"contentpipe-style-reference\",\"contentpipe-wechat-draft-publisher\"]}"
 
+resolve_python() {
+    if [ -n "${CONTENTPIPE_PYTHON:-}" ] && [ -x "${CONTENTPIPE_PYTHON}" ]; then
+        echo "$CONTENTPIPE_PYTHON"
+        return 0
+    fi
+    if [ -x "$PLUGIN_DIR/.venv/bin/python" ]; then
+        echo "$PLUGIN_DIR/.venv/bin/python"
+        return 0
+    fi
+    if [ -x "$PLUGIN_DIR/venv/bin/python" ]; then
+        echo "$PLUGIN_DIR/venv/bin/python"
+        return 0
+    fi
+    command -v python3
+}
+
+PYTHON_BIN="$(resolve_python)"
+
+check_runtime_python() {
+    if ! "$PYTHON_BIN" - <<'PY' >/dev/null 2>&1
+import importlib.util, sys
+mods = ['uvicorn']
+missing = [m for m in mods if importlib.util.find_spec(m) is None]
+raise SystemExit(1 if missing else 0)
+PY
+    then
+        echo "❌ 当前 Python 不可用：$PYTHON_BIN"
+        echo "   缺少模块: uvicorn"
+        echo "   请优先使用项目虚拟环境，例如："
+        echo "   python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt"
+        echo "   或显式指定 CONTENTPIPE_PYTHON=/path/to/venv/bin/python"
+        exit 1
+    fi
+}
+
 service_start() {
     cd "$PLUGIN_DIR/scripts" || exit 1
     if pgrep -f "uvicorn web.app:app.*--port $PORT" > /dev/null 2>&1; then
@@ -32,8 +67,11 @@ service_start() {
         return 0
     fi
 
+    check_runtime_python
+
     echo "🚀 启动 ContentPipe (port $PORT)..."
-    nohup python3 -m uvicorn web.app:app \
+    echo "   Python: $PYTHON_BIN"
+    nohup "$PYTHON_BIN" -m uvicorn web.app:app \
         --host "$HOST" --port "$PORT" \
         > "$LOG_FILE" 2>&1 &
 
@@ -79,7 +117,7 @@ install_agent() {
     echo "   workspace: $CONTENTPIPE_AGENT_WORKSPACE"
     echo "   agentDir:  $CONTENTPIPE_AGENT_DIR"
 
-    if CONTENTPIPE_AGENT_ID="$CONTENTPIPE_AGENT_ID" python3 - <<'PY'
+    if CONTENTPIPE_AGENT_ID="$CONTENTPIPE_AGENT_ID" "$PYTHON_BIN" - <<'PY'
 import json, os, subprocess, sys
 agent_id = os.environ['CONTENTPIPE_AGENT_ID']
 items=json.loads(subprocess.check_output(['openclaw','config','get','agents.list','--json']).decode())
@@ -95,7 +133,7 @@ PY
         "${CMD[@]}"
     fi
 
-    AGENT_INDEX=$(CONTENTPIPE_AGENT_ID="$CONTENTPIPE_AGENT_ID" python3 - <<'PY'
+    AGENT_INDEX=$(CONTENTPIPE_AGENT_ID="$CONTENTPIPE_AGENT_ID" "$PYTHON_BIN" - <<'PY'
 import json, os, subprocess
 agent_id = os.environ['CONTENTPIPE_AGENT_ID']
 items=json.loads(subprocess.check_output(['openclaw','config','get','agents.list','--json']).decode())
@@ -118,7 +156,7 @@ PY
     openclaw config set "agents.list[$AGENT_INDEX].tools.deny" '[]' --strict-json
     openclaw config set "agents.list[$AGENT_INDEX].skills" "$CONTENTPIPE_AGENT_SKILLS_JSON" --strict-json
 
-    MERGED_SKILL_DIRS=$(CONTENTPIPE_SKILLS_DIR="$CONTENTPIPE_SKILLS_DIR" python3 - <<'PY'
+    MERGED_SKILL_DIRS=$(CONTENTPIPE_SKILLS_DIR="$CONTENTPIPE_SKILLS_DIR" "$PYTHON_BIN" - <<'PY'
 import json, os, subprocess
 skills_dir = os.environ['CONTENTPIPE_SKILLS_DIR']
 try:
