@@ -152,38 +152,6 @@ def save_chat_message(run_id: str, node_id: str, role: str, content: str,
     chat_file.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _compact_cover_summary(cover: dict) -> str:
-    """把导演封面说明压成一句结果型摘要，避免解释性话语。"""
-    if not isinstance(cover, dict):
-        return "—"
-
-    summary = str(cover.get("summary", "") or "").strip()
-    if summary:
-        return summary[:80]
-
-    desc = str(cover.get("description", "") or "").strip()
-    if desc:
-        for prefix in ("封面主视觉：", "主视觉：", "封面："):
-            if desc.startswith(prefix):
-                desc = desc[len(prefix):].strip()
-        for sep in ("。", "；", "\n"):
-            if sep in desc:
-                desc = desc.split(sep, 1)[0].strip()
-        parts = [p.strip() for p in desc.replace("，", ",").split(",") if p.strip()]
-        if len(parts) >= 2:
-            desc = f"{parts[0]}，{parts[1]}"
-        elif parts:
-            desc = parts[0]
-        if desc:
-            return desc[:80]
-
-    title = str(cover.get("title", "") or "").strip()
-    if title:
-        return title[:80]
-
-    return "—"
-
-
 def get_node_output(run_id: str, node_id: str) -> dict:
     """返回人类可读的节点输出摘要（用于 Web UI 展开面板）"""
     state = _load_raw_state(run_id)
@@ -343,7 +311,7 @@ def get_node_output(run_id: str, node_id: str) -> dict:
         items = [
             {"label": "🎨 风格", "value": vp.get("style", "—")},
             {"label": "🌈 色调", "value": (vp.get("global_tone", "—"))[:120]},
-            {"label": "🧷 封面摘要", "value": _compact_cover_summary(cover)},
+            {"label": "🧷 封面设计", "value": (cover.get("description", "—"))[:140]},
             {"label": "🖼️ 配图数", "value": f"{len(placements)} 张"},
         ]
         items.extend(placement_cards)
