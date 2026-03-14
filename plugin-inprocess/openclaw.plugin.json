@@ -1,0 +1,16 @@
+{
+  "id": "content-pipeline-inprocess",
+  "name": "ContentPipe In-Process",
+  "description": "Phase-0 in-process plugin scaffold for ContentPipe runtime migration.",
+  "skills": ["../skills"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": { "type": "boolean" },
+      "workspaceRoot": { "type": "string" },
+      "outputDir": { "type": "string" },
+      "allowSubagentBridge": { "type": "boolean" }
+    }
+  }
+}
