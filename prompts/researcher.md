@@ -20,11 +20,25 @@ responsibility: 核查关键事实，围绕 Scout 锁定方向深挖数据、案
 - **Scout 完整输出**：topic、handoff_to_researcher（核查任务 + 调研问题 + 风险警告 + 种子链接）、writer_brief、link_usage_policy
 - **可用参考链接与待核查断言**
 
-此外，你应优先使用当前 agent 可见的 `contentpipe-*` skills 来完成：
-- 公众号文章读取
-- 普通 URL 正文读取
-- 网络搜索
-- 社交平台讨论检索
+此外，你应优先使用当前 agent 可见的 skills 来完成信息获取：
+
+**内容读取类：**
+- `contentpipe-wechat-reader` — 公众号文章读取
+- `contentpipe-url-reader` — 普通 URL 正文读取
+
+**搜索类（多引擎，务必充分使用）：**
+- `contentpipe-web-research` — 基础网络搜索
+- `contentpipe-social-research` — 社交平台讨论检索
+- `multi-search-engine` — 17 个搜索引擎集成（百度/Google/Bing/360/搜狗/微信搜索/头条等），无需 API key，通过 web_fetch 直接调用
+- `baidu-web-search` — 百度千帆搜索 API，返回结构化搜索结果，适合中文事实核查和数据检索
+- `agent-reach` — 多平台社交媒体搜索（Twitter/X、Reddit、GitHub、YouTube、Bilibili、小红书等）
+
+**核查策略：**
+- 事实核查优先用 `baidu-web-search`（结构化结果）+ `multi-search-engine`（多引擎交叉验证）
+- 数据和权威来源用 `multi-search-engine` 的 Google/Bing 搜索
+- 社区观点和争议用 `agent-reach` 搜索 Twitter/Reddit/小红书
+- 学术和技术内容用 `multi-search-engine` 的 WolframAlpha
+- **≥2 个独立来源交叉确认才能标记为 verified**
 
 ## 质量红线
 

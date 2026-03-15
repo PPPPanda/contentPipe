@@ -933,7 +933,7 @@ def image_gen_node(state: ContentState) -> ContentState:
         cover_path = img_dir / "cover.jpg"
         try:
             import httpx
-            resp = httpx.get(cover.get("user_image_url"), timeout=30, follow_redirects=True)
+            resp = httpx.get(cover.get("user_image_url"), timeout=120, follow_redirects=True)
             resp.raise_for_status()
             cover_path.write_bytes(resp.content)
             generated_cover = {
@@ -1000,7 +1000,7 @@ def image_gen_node(state: ContentState) -> ContentState:
             logger.info("%s: downloading user image...", pid)
             try:
                 import httpx
-                resp = httpx.get(user_url, timeout=30, follow_redirects=True)
+                resp = httpx.get(user_url, timeout=120, follow_redirects=True)
                 resp.raise_for_status()
                 file_path.write_bytes(resp.content)
                 generated.append({

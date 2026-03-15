@@ -23,7 +23,7 @@ CONTENTPIPE_AGENT_WORKSPACE="${CONTENTPIPE_AGENT_WORKSPACE:-$HOME/.openclaw/work
 CONTENTPIPE_AGENT_DIR="${CONTENTPIPE_AGENT_DIR:-$HOME/.openclaw/agents/${CONTENTPIPE_AGENT_ID}/agent}"
 CONTENTPIPE_AGENT_MODEL="${CONTENTPIPE_AGENT_MODEL:-}"
 CONTENTPIPE_SKILLS_DIR="${CONTENTPIPE_SKILLS_DIR:-$PLUGIN_DIR/skills}"
-CONTENTPIPE_AGENT_SKILLS_JSON="${CONTENTPIPE_AGENT_SKILLS_JSON:-[\"contentpipe-wechat-reader\",\"contentpipe-url-reader\",\"contentpipe-web-research\",\"contentpipe-social-research\",\"contentpipe-style-reference\",\"contentpipe-wechat-draft-publisher\"]}"
+CONTENTPIPE_AGENT_SKILLS_JSON="${CONTENTPIPE_AGENT_SKILLS_JSON:-[\"contentpipe-wechat-reader\",\"contentpipe-url-reader\",\"contentpipe-web-research\",\"contentpipe-social-research\",\"contentpipe-style-reference\",\"contentpipe-wechat-draft-publisher\",\"multi-search-engine\",\"baidu-web-search\",\"agent-reach\"]}"
 
 resolve_python() {
     if [ -n "${CONTENTPIPE_PYTHON:-}" ] && [ -x "${CONTENTPIPE_PYTHON}" ]; then

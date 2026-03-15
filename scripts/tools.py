@@ -99,7 +99,7 @@ def call_llm(
             chat_history=chat_history,
             gateway_session_key=gateway_session_key,
             gateway_agent_id=gateway_agent_id,
-            timeout_seconds=int(pipeline_config.get("gateway_timeout_seconds", 420)),
+            timeout_seconds=int(pipeline_config.get("gateway_timeout_seconds", 1800)),
         )
 
     if "/" in model:
@@ -142,7 +142,7 @@ def _call_via_gateway(
     system_prompt: str | None = None,
     gateway_session_key: str | None = None,
     gateway_agent_id: str | None = None,
-    timeout_seconds: int = 420,
+    timeout_seconds: int = 1800,
 ) -> str:
     """通过 OpenClaw Gateway 调用 LLM。"""
     extra_headers = {}
@@ -398,7 +398,7 @@ def _search_platform(platform: str, query: str) -> list[dict]:
         try:
             r = subprocess.run(
                 ["xreach", "search", query, "--json", "-n", "10"],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, text=True, timeout=180,
             )
             if r.returncode == 0 and r.stdout.strip():
                 # 检查是否是认证失败
@@ -429,7 +429,7 @@ def _search_platform(platform: str, query: str) -> list[dict]:
         try:
             r = subprocess.run(
                 ["mcporter", "call", f'xiaohongshu.search_feeds(keyword: "{query}")'],
-                capture_output=True, text=True, timeout=30, cwd=_WORKSPACE_ROOT,
+                capture_output=True, text=True, timeout=180, cwd=_WORKSPACE_ROOT,
             )
             if r.returncode == 0 and r.stdout.strip():
                 data = json.loads(r.stdout)
@@ -454,7 +454,7 @@ def _search_platform(platform: str, query: str) -> list[dict]:
         try:
             encoded = query.replace(" ", "+")
             url = f"https://search.bilibili.com/all?keyword={encoded}"
-            with httpx.Client(timeout=20, proxy=None) as client:
+            with httpx.Client(timeout=180, proxy=None) as client:
                 resp = client.get(
                     f"https://r.jina.ai/{url}",
                     headers={"Accept": "text/markdown", "User-Agent": "agent-reach/1.0"},
@@ -477,7 +477,7 @@ def _search_platform(platform: str, query: str) -> list[dict]:
         try:
             r = subprocess.run(
                 ["mcporter", "call", f'douyin.search_douyin_videos(keyword: "{query}")'],
-                capture_output=True, text=True, timeout=30, cwd=_WORKSPACE_ROOT,
+                capture_output=True, text=True, timeout=180, cwd=_WORKSPACE_ROOT,
             )
             if r.returncode == 0 and r.stdout.strip():
                 data = json.loads(r.stdout)
@@ -501,7 +501,7 @@ def _search_platform(platform: str, query: str) -> list[dict]:
         try:
             r = subprocess.run(
                 ["yt-dlp", "--dump-json", f"ytsearch5:{query}"],
-                capture_output=True, text=True, timeout=45,
+                capture_output=True, text=True, timeout=180,
             )
             if r.returncode == 0 and r.stdout.strip():
                 items = []
@@ -529,7 +529,7 @@ def _search_platform(platform: str, query: str) -> list[dict]:
             r = subprocess.run(
                 ["gh", "search", "repos", query, "--sort", "stars", "--limit", "5", "--json",
                  "name,url,description,stargazersCount"],
-                capture_output=True, text=True, timeout=20,
+                capture_output=True, text=True, timeout=180,
             )
             if r.returncode == 0 and r.stdout.strip():
                 items = json.loads(r.stdout)

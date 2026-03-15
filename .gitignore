@@ -29,6 +29,10 @@ scripts/output/
 !.env.example
 settings.local.yaml
 
+# Node modules (skill dependencies)
+node_modules/
+skills/*/config.json
+
 # Build artifacts
 *.egg-info/
 dist/
