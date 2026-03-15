@@ -60,50 +60,120 @@ PY
     fi
 }
 
+WATCHDOG_PID_FILE="/tmp/contentpipe-watchdog.pid"
+RESTART_DELAY="${CONTENTPIPE_RESTART_DELAY:-3}"
+MAX_RAPID_RESTARTS=5
+RAPID_WINDOW=60
+
+# 守护进程：自动重启 uvicorn，崩溃后等待 $RESTART_DELAY 秒再拉起
+_watchdog_loop() {
+    cd "$PLUGIN_DIR/scripts" || exit 1
+    local rapid_count=0
+    local window_start
+    window_start=$(date +%s)
+
+    while true; do
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] 🚀 启动 uvicorn (port $PORT)..." >> "$LOG_FILE"
+        "$PYTHON_BIN" -m uvicorn web.app:app \
+            --host "$HOST" --port "$PORT" \
+            >> "$LOG_FILE" 2>&1
+        EXIT_CODE=$?
+
+        # 检测快速连续崩溃，防止无限重启风暴
+        local now
+        now=$(date +%s)
+        if (( now - window_start < RAPID_WINDOW )); then
+            rapid_count=$((rapid_count + 1))
+        else
+            rapid_count=1
+            window_start=$now
+        fi
+
+        if (( rapid_count >= MAX_RAPID_RESTARTS )); then
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] ❌ ${RAPID_WINDOW}s 内连续崩溃 ${MAX_RAPID_RESTARTS} 次，停止自动重启" >> "$LOG_FILE"
+            rm -f "$WATCHDOG_PID_FILE"
+            exit 1
+        fi
+
+        echo "[$(date '+%Y-%m-%d %H:%M:%S')] ⚠️  uvicorn 退出 (code=$EXIT_CODE)，${RESTART_DELAY}s 后重启..." >> "$LOG_FILE"
+        sleep "$RESTART_DELAY"
+    done
+}
+
 service_start() {
     cd "$PLUGIN_DIR/scripts" || exit 1
-    if pgrep -f "uvicorn web.app:app.*--port $PORT" > /dev/null 2>&1; then
-        echo "⚠️  ContentPipe 已在运行 (port $PORT)"
-        return 0
+
+    # 检查守护进程是否已在运行
+    if [ -f "$WATCHDOG_PID_FILE" ]; then
+        local OLD_PID
+        OLD_PID=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null)
+        if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+            echo "⚠️  ContentPipe 已在运行 (watchdog PID: $OLD_PID, port $PORT)"
+            return 0
+        fi
+        rm -f "$WATCHDOG_PID_FILE"
     fi
 
     check_runtime_python
 
-    echo "🚀 启动 ContentPipe (port $PORT)..."
+    echo "🚀 启动 ContentPipe (port $PORT, 自动重启已启用)..."
     echo "   Python: $PYTHON_BIN"
-    nohup "$PYTHON_BIN" -m uvicorn web.app:app \
-        --host "$HOST" --port "$PORT" \
-        > "$LOG_FILE" 2>&1 &
+    nohup bash -c "$(declare -f _watchdog_loop); PLUGIN_DIR='$PLUGIN_DIR' PYTHON_BIN='$PYTHON_BIN' HOST='$HOST' PORT='$PORT' LOG_FILE='$LOG_FILE' RESTART_DELAY='$RESTART_DELAY' MAX_RAPID_RESTARTS='$MAX_RAPID_RESTARTS' RAPID_WINDOW='$RAPID_WINDOW' WATCHDOG_PID_FILE='$WATCHDOG_PID_FILE' _watchdog_loop" \
+        > /dev/null 2>&1 &
 
-    PID=$!
+    WATCHDOG_PID=$!
+    echo "$WATCHDOG_PID" > "$WATCHDOG_PID_FILE"
     sleep 2
 
-    if kill -0 "$PID" 2>/dev/null; then
-        echo "✅ ContentPipe 已启动 (PID: $PID, port: $PORT)"
+    if pgrep -f "uvicorn web.app:app.*--port $PORT" > /dev/null 2>&1; then
+        echo "✅ ContentPipe 已启动 (watchdog PID: $WATCHDOG_PID, port: $PORT)"
         echo "   Web UI: http://localhost:$PORT"
         echo "   日志: $LOG_FILE"
+        echo "   崩溃后自动重启（${RESTART_DELAY}s 间隔，${RAPID_WINDOW}s 内最多 ${MAX_RAPID_RESTARTS} 次）"
     else
         echo "❌ 启动失败，查看日志: $LOG_FILE"
         tail -20 "$LOG_FILE"
+        rm -f "$WATCHDOG_PID_FILE"
         exit 1
     fi
 }
 
 service_stop() {
     echo "🛑 停止 ContentPipe..."
+    # 先杀守护进程，防止它把 uvicorn 拉起来
+    if [ -f "$WATCHDOG_PID_FILE" ]; then
+        local WD_PID
+        WD_PID=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null)
+        if [ -n "$WD_PID" ] && kill -0 "$WD_PID" 2>/dev/null; then
+            kill "$WD_PID" 2>/dev/null || true
+        fi
+        rm -f "$WATCHDOG_PID_FILE"
+    fi
     pkill -f "uvicorn web.app:app.*--port $PORT" 2>/dev/null || true
     sleep 1
     echo "✅ 已停止"
 }
 
 service_status() {
+    # 守护进程状态
+    local wd_status="未运行"
+    if [ -f "$WATCHDOG_PID_FILE" ]; then
+        local WD_PID
+        WD_PID=$(cat "$WATCHDOG_PID_FILE" 2>/dev/null)
+        if [ -n "$WD_PID" ] && kill -0 "$WD_PID" 2>/dev/null; then
+            wd_status="运行中 (PID: $WD_PID)"
+        fi
+    fi
+
     if pgrep -f "uvicorn web.app:app.*--port $PORT" > /dev/null 2>&1; then
         PID=$(pgrep -f "uvicorn web.app:app.*--port $PORT" | head -1)
         echo "✅ ContentPipe 运行中 (PID: $PID, port: $PORT)"
+        echo "   守护进程: $wd_status"
         HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$PORT/api/health" 2>/dev/null)
         echo "   健康检查: $HTTP_CODE"
     else
         echo "⭕ ContentPipe 未运行"
+        echo "   守护进程: $wd_status"
     fi
 }
 
