@@ -419,13 +419,25 @@
                 </button>
             </form>
             {% if prev_review_node %}
-            <form method="post" action="/api/runs/{{ run.run_id }}/nodes/{{ stage }}/rerun"
-                  onsubmit="return confirm('丢弃「{{ node_info.label }}」当前成果和聊天记录，并回到「{{ prev_review_info.label }}」继续修改？')">
-                <button type="submit"
+            <div id="rerun-container">
+                <button type="button" onclick="showRerunConfirm()"
                         class="w-full px-4 py-2.5 bg-amber-600 text-white rounded-lg hover:bg-amber-500 transition text-sm">
                     ↩️ 丢弃当前节点成果，回到「{{ prev_review_info.label }}」
                 </button>
-            </form>
+            </div>
+            <div id="rerun-confirm" style="display:none" class="space-y-2">
+                <p class="text-xs text-amber-300 text-center py-1">⚠️ 丢弃「{{ node_info.label }}」当前成果和聊天记录，回到「{{ prev_review_info.label }}」？</p>
+                <div class="flex gap-2">
+                    <button type="button" onclick="doRerunFromButton()"
+                            class="flex-1 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-500 transition text-sm font-medium">
+                        确认丢弃
+                    </button>
+                    <button type="button" onclick="hideRerunConfirm()"
+                            class="flex-1 px-3 py-2 border border-slate-600 text-slate-300 rounded-lg hover:bg-slate-800 transition text-sm">
+                        取消
+                    </button>
+                </div>
+            </div>
             {% endif %}
         </div>
         {% else %}
@@ -859,8 +871,18 @@ async function saveArticle() {
     }
 }
 
+function showRerunConfirm() {
+    document.getElementById('rerun-container').style.display = 'none';
+    document.getElementById('rerun-confirm').style.display = 'block';
+}
+function hideRerunConfirm() {
+    document.getElementById('rerun-confirm').style.display = 'none';
+    document.getElementById('rerun-container').style.display = 'block';
+}
+async function doRerunFromButton() {
+    await rerunNode();
+}
 async function rerunNode() {
-    if (!confirm(`丢弃「{{ node_info.label }}」当前成果和聊天记录，并回到「{{ prev_review_info.label if prev_review_info else '上一步' }}」继续修改？`)) return;
     try {
         const resp = await fetch(`/api/runs/${runId}/nodes/${nodeId}/rerun`, {
             method: 'POST',
@@ -870,12 +892,14 @@ async function rerunNode() {
         const data = await resp.json();
         if (!resp.ok) {
             appendMsg('assistant', `⚠️ 回退失败: ${data.detail || '未知错误'}`);
+            hideRerunConfirm();
             return;
         }
         appendMsg('assistant', `↩️ 已丢弃当前节点，回到 ${data.prev_node}`);
         window.location.href = data.redirect_to || `/runs/${runId}`;
     } catch(e) {
         appendMsg('assistant', '⚠️ 回退失败');
+        hideRerunConfirm();
     }
 }
 
