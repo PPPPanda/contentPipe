@@ -1,55 +1,135 @@
 # 模板映射配置
 # Pipeline Formatter 阶段根据话题分类自动匹配模板
+# 2026-03-15 起：公众号模板升级为 11 个领域 × 每个领域 2 个版本（A/B）
+# 默认按关键词落到 A 版；B 版通过 style alias 手动选择。
 
 wechat:
   styles:
     exact:
-      tech-digital: tech-digital.html
-      business-finance: business-finance.html
-      news-insight: news-insight.html
-      lifestyle: lifestyle.html
-      education: education.html
+      tech-a: wechat-tech-a.html
+      tech-b: wechat-tech-b.html
+      government-a: wechat-government-a.html
+      government-b: wechat-government-b.html
+      office-a: wechat-office-a.html
+      office-b: wechat-office-b.html
+      marketing-a: wechat-marketing-a.html
+      marketing-b: wechat-marketing-b.html
+      finance-a: wechat-finance-a.html
+      finance-b: wechat-finance-b.html
+      academic-a: wechat-academic-a.html
+      academic-b: wechat-academic-b.html
+      game-a: wechat-game-a.html
+      game-b: wechat-game-b.html
+      education-a: wechat-education-a.html
+      education-b: wechat-education-b.html
+      medical-a: wechat-medical-a.html
+      medical-b: wechat-medical-b.html
+      legal-a: wechat-legal-a.html
+      legal-b: wechat-legal-b.html
+      travel-a: wechat-travel-a.html
+      travel-b: wechat-travel-b.html
     aliases:
-      tech-flat: tech-digital.html
-      tech-minimal: tech-digital.html
-      tech-satirical: tech-digital.html
-      tech-editorial: tech-digital.html
-      cyberpunk: tech-digital.html
-      watercolor: lifestyle.html
-      chinese-ink: lifestyle.html
-      business: business-finance.html
-      news: news-insight.html
+      tech: wechat-tech-a.html
+      tech-clean: wechat-tech-a.html
+      tech-data: wechat-tech-b.html
+      government: wechat-government-a.html
+      gov: wechat-government-a.html
+      policy: wechat-government-b.html
+      office: wechat-office-a.html
+      sop: wechat-office-b.html
+      market: wechat-marketing-a.html
+      growth: wechat-marketing-b.html
+      finance: wechat-finance-a.html
+      business: wechat-finance-a.html
+      investment: wechat-finance-b.html
+      academic: wechat-academic-a.html
+      research: wechat-academic-b.html
+      game: wechat-game-a.html
+      gaming: wechat-game-b.html
+      education: wechat-education-a.html
+      edu: wechat-education-a.html
+      tutorial: wechat-education-b.html
+      medical: wechat-medical-a.html
+      health: wechat-medical-b.html
+      legal: wechat-legal-a.html
+      law: wechat-legal-a.html
+      service-law: wechat-legal-b.html
+      travel: wechat-travel-a.html
+      tourism: wechat-travel-a.html
+      diary-travel: wechat-travel-b.html
+      # 旧模板别名兼容
+      tech-digital: wechat-tech-a.html
+      business-finance: wechat-finance-a.html
+      news-insight: wechat-government-b.html
+      lifestyle: wechat-travel-b.html
+      education-old: wechat-education-a.html
     prefixes:
-      tech: tech-digital.html
-      business: business-finance.html
-      news: news-insight.html
-      edu: education.html
-      life: lifestyle.html
+      tech: wechat-tech-a.html
+      gov: wechat-government-a.html
+      office: wechat-office-a.html
+      market: wechat-marketing-a.html
+      finance: wechat-finance-a.html
+      academic: wechat-academic-a.html
+      game: wechat-game-a.html
+      edu: wechat-education-a.html
+      medical: wechat-medical-a.html
+      legal: wechat-legal-a.html
+      travel: wechat-travel-a.html
   mapping:
     # 科技类
     - keywords: ["科技", "AI", "人工智能", "数码", "编程", "互联网", "区块链", "Web3", "芯片", "手机", "电脑", "软件", "开源"]
-      template: tech-digital.html
+      template: wechat-tech-a.html
       accent_color: "#1e90ff"
 
-    # 生活方式类
-    - keywords: ["美食", "旅行", "旅游", "时尚", "情感", "健康", "养生", "穿搭", "家居", "宠物", "亲子", "婚姻", "恋爱"]
-      template: lifestyle.html
-      accent_color: "#ff6b6b"
+    # 党政 / 政务 / 新闻政策
+    - keywords: ["党政", "政务", "政策", "时政", "党建", "机关", "通报", "工作部署", "公告", "新闻", "时事", "评论"]
+      template: wechat-government-a.html
+      accent_color: "#c0392b"
 
-    # 商业财经类
+    # 办公 / 内部流程 / 教程指南
+    - keywords: ["办公", "SOP", "流程", "指南", "操作", "制度", "流程图", "协作", "会议纪要", "行政", "教程"]
+      template: wechat-office-a.html
+      accent_color: "#4b5563"
+
+    # 市场 / 营销 / 增长
+    - keywords: ["市场", "营销", "增长", "品牌", "活动", "运营", "投放", "用户增长", "获客", "转化", "广告"]
+      template: wechat-marketing-a.html
+      accent_color: "#e67e22"
+
+    # 金融 / 财经 / 商业
     - keywords: ["财经", "投资", "股票", "基金", "商业", "职场", "创业", "经济", "金融", "理财", "房产", "保险"]
-      template: business-finance.html
+      template: wechat-finance-a.html
       accent_color: "#2c3e50"
 
-    # 新闻深度类
-    - keywords: ["新闻", "时事", "政策", "深度", "分析", "社会", "国际", "政治", "法律", "热点", "评论"]
-      template: news-insight.html
-      accent_color: "#e94560"
+    # 学术研究
+    - keywords: ["学术", "研究", "论文", "实验", "文献", "方法论", "科研", "数据分析", "课题", "综述"]
+      template: wechat-academic-a.html
+      accent_color: "#5b5fc7"
+
+    # 游戏
+    - keywords: ["游戏", "版本更新", "攻略", "角色", "电竞", "副本", "卡牌", "手游", "主机", "Steam"]
+      template: wechat-game-a.html
+      accent_color: "#7c3aed"
 
     # 教育学习类
-    - keywords: ["学习", "教程", "知识", "干货", "方法", "考试", "留学", "英语", "读书", "成长", "技能", "心理学"]
-      template: education.html
+    - keywords: ["学习", "知识", "干货", "方法", "考试", "留学", "英语", "读书", "成长", "技能", "心理学", "备考"]
+      template: wechat-education-a.html
       accent_color: "#6c5ce7"
+
+    # 医疗健康
+    - keywords: ["医疗", "医学", "医院", "问诊", "门诊", "健康", "养生", "疾病", "科普", "药物", "检查"]
+      template: wechat-medical-a.html
+      accent_color: "#0f766e"
+
+    # 法律
+    - keywords: ["法律", "法条", "律师", "合规", "案例", "法规", "诉讼", "合同", "法务", "司法"]
+      template: wechat-legal-a.html
+      accent_color: "#1f3a5f"
+
+    # 旅游 / 生活方式 / 出行
+    - keywords: ["旅行", "旅游", "出行", "目的地", "游记", "酒店", "景点", "航班", "citywalk", "美食", "时尚", "情感", "家居", "亲子"]
+      template: wechat-travel-a.html
+      accent_color: "#0ea5a4"
 
   # 默认模板（无匹配时使用）
   default: base.html

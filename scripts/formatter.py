@@ -127,28 +127,41 @@ def markdown_to_wechat_html(md_text: str, platform: str = "wechat", template_nam
 
 
 def _get_platform_styles(platform: str, template_name: str = "") -> dict[str, str]:
-    """根据平台和模板返回内联样式"""
-    # 深色模板列表（需要浅色文字）
-    DARK_TEMPLATES = {"tech-digital.html"}
-
-    if platform == "wechat" and template_name in DARK_TEMPLATES:
-        # 深色科技模板：浅色文字适配深背景
-        return {
-            "h2": 'style="font-size:18px;font-weight:700;color:#1e90ff;margin:24px 0 12px;padding-bottom:8px;border-bottom:1px solid #21262d;"',
-            "h3": 'style="font-size:16px;font-weight:700;color:#58a6ff;margin:20px 0 8px;"',
-            "p":  'style="font-size:16px;color:#c9d1d9;margin:12px 0;line-height:1.8;"',
-            "blockquote": 'style="border-left:3px solid #30363d;padding:8px 14px;color:#8b949e;background:#161b22;margin:16px 0;border-radius:0 4px 4px 0;"',
-            "li": 'style="font-size:16px;color:#c9d1d9;margin:4px 0;line-height:1.8;"',
-            "strong": 'style="color:#ffffff;"',
+    """根据平台和模板返回内联样式。微信公众号模板统一走 dark-mode safe 白底正文方案。"""
+    if platform == "wechat":
+        domain_styles = {
+            "wechat-tech-": {"accent": "#1e90ff", "soft": "#eef6ff"},
+            "wechat-government-": {"accent": "#c0392b", "soft": "#fdf2f2"},
+            "wechat-office-": {"accent": "#4b5563", "soft": "#f7f7f8"},
+            "wechat-marketing-": {"accent": "#e67e22", "soft": "#fff6ed"},
+            "wechat-finance-": {"accent": "#2c3e50", "soft": "#f7f9fb"},
+            "wechat-academic-": {"accent": "#5b5fc7", "soft": "#f4f3ff"},
+            "wechat-game-": {"accent": "#7c3aed", "soft": "#f7f2ff"},
+            "wechat-education-": {"accent": "#6c5ce7", "soft": "#f4f0ff"},
+            "wechat-medical-": {"accent": "#0f766e", "soft": "#eefcf8"},
+            "wechat-legal-": {"accent": "#1f3a5f", "soft": "#f4f7fb"},
+            "wechat-travel-": {"accent": "#0ea5a4", "soft": "#eefdfd"},
+            # 兼容旧模板
+            "tech-digital": {"accent": "#1e90ff", "soft": "#eef6ff"},
+            "business-finance": {"accent": "#2c3e50", "soft": "#f7f9fb"},
+            "news-insight": {"accent": "#e94560", "soft": "#fafafa"},
+            "lifestyle": {"accent": "#ff6b6b", "soft": "#fff8f5"},
+            "education": {"accent": "#6c5ce7", "soft": "#f4f0ff"},
         }
-    elif platform == "wechat":
+        accent = "#07c160"
+        soft = "#f7f7f7"
+        for prefix, style in domain_styles.items():
+            if template_name.startswith(prefix) or template_name == f"{prefix}.html":
+                accent = style["accent"]
+                soft = style["soft"]
+                break
         return {
-            "h2": 'style="font-size:18px;font-weight:700;color:#1a1a1a;margin:24px 0 12px;padding-bottom:8px;border-bottom:1px solid #eee;"',
-            "h3": 'style="font-size:16px;font-weight:700;color:#333;margin:20px 0 8px;"',
+            "h2": f'style="font-size:18px;font-weight:700;color:{accent};margin:24px 0 12px;padding-bottom:8px;border-bottom:1px solid #ececec;"',
+            "h3": f'style="font-size:16px;font-weight:700;color:#222;margin:20px 0 8px;"',
             "p":  'style="font-size:16px;color:#333;margin:12px 0;line-height:1.8;"',
-            "blockquote": 'style="border-left:3px solid #07c160;padding:8px 14px;color:#666;background:#f7f7f7;margin:16px 0;border-radius:0 4px 4px 0;"',
+            "blockquote": f'style="border-left:3px solid {accent};padding:8px 14px;color:#666;background:{soft};border:1px solid #ececec;margin:16px 0;border-radius:0 6px 6px 0;"',
             "li": 'style="font-size:16px;color:#333;margin:4px 0;line-height:1.8;"',
-            "strong": 'style="color:#1a1a1a;"',
+            "strong": 'style="color:#1f2937;"',
         }
     else:  # xhs
         return {
