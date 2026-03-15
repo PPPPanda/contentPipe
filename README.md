@@ -424,20 +424,7 @@ curl http://127.0.0.1:8765/api/health
 - Gateway 已重启，agent 配置已生效
 - `http://127.0.0.1:8765/api/health` 返回 healthy
 
-### 6.2 Docker 一键部署（推荐给外部用户）
-
-```bash
-cp .env.example .env
-# 修改 .env 里的 CONTENTPIPE_AUTH_TOKEN / OPENCLAW_GATEWAY_URL
-
-docker compose up -d --build
-```
-
-启动后：
-- Web UI: `http://localhost:8765`
-- 首次访问会要求输入 `CONTENTPIPE_AUTH_TOKEN`
-
-### 6.3 直接启动 uvicorn
+### 6.2 直接启动 uvicorn
 
 ```bash
 cd scripts
@@ -446,14 +433,14 @@ cd scripts
 
 如果你的虚拟环境不在 `.venv/`，请替换成对应路径。不要默认依赖系统 `python3`，否则在云端很容易出现 `uvicorn` 模块缺失。
 
-### 6.4 健康检查
+### 6.3 健康检查
 
 ```bash
 curl http://localhost:8765/api/health
 curl http://localhost:8765/api/info
 ```
 
-### 6.4.1 Gateway 模式常见坑
+### 6.3.1 Gateway 模式常见坑
 
 如果你启用了 `llm_mode=gateway`，但发现：
 
@@ -479,11 +466,11 @@ curl http://localhost:8765/api/info
    plugins/content-pipeline/output/runs/<run_id>/
    ```
 
-### 6.5 生产部署 / 反向代理 / HTTPS
+### 6.4 生产部署 / 反向代理 / HTTPS
 
 如果你要把它部署给别人使用，推荐的最小方案是：
 
-1. ContentPipe 只监听内网或 Docker 网络
+1. ContentPipe 只监听内网（127.0.0.1 或局域网）
 2. 用 Nginx / Caddy 做反向代理
 3. 打开 `CONTENTPIPE_AUTH_TOKEN`
 4. 通过 HTTPS 暴露外部访问
@@ -523,7 +510,7 @@ server {
 ```bash
 CONTENTPIPE_AUTH_TOKEN=change-me
 CONTENTPIPE_PUBLIC_BASE_URL=https://contentpipe.example.com
-OPENCLAW_GATEWAY_URL=http://host.docker.internal:18789
+OPENCLAW_GATEWAY_URL=http://127.0.0.1:18789
 ```
 
 如果只在本机使用，可以不配反代和 HTTPS；但**只要要给别人访问，就建议必须开 HTTPS + 鉴权**。
