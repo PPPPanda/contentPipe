@@ -20,12 +20,12 @@
                         <p class="text-xs text-slate-400">长文排版</p>
                     </div>
                 </label>
-                <label class="flex-1 cursor-pointer">
-                    <input type="radio" name="platform" value="xhs" class="peer hidden">
-                    <div class="peer-checked:border-sky-500 peer-checked:bg-sky-900/20 border border-slate-600 rounded-lg p-3 text-center transition">
+                <label class="flex-1 cursor-not-allowed opacity-50">
+                    <input type="radio" name="platform" value="xhs" class="peer hidden" disabled>
+                    <div class="border border-slate-700 rounded-lg p-3 text-center">
                         <p class="text-2xl">📕</p>
                         <p class="text-sm text-white mt-1">小红书</p>
-                        <p class="text-xs text-slate-400">图文笔记</p>
+                        <p class="text-xs text-slate-500">未开发</p>
                     </div>
                 </label>
             </div>
@@ -36,8 +36,9 @@
             <label class="block text-sm text-slate-300 mb-2">
                 指定话题 <span class="text-slate-500">（留空则自动选题）</span>
             </label>
-            <input type="text" name="topic" placeholder="例: AI Agent 在软件开发中的应用"
-                   class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none">
+            <textarea name="topic" placeholder="例: AI Agent 在软件开发中的应用" rows="2"
+                      class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-white placeholder-slate-500 focus:border-sky-500 focus:outline-none resize-y min-h-[3rem]"
+                      oninput="this.style.height = 'auto'; this.style.height = this.scrollHeight + 'px';"></textarea>
         </div>
 
         <!-- 审核模式 -->
