@@ -33,9 +33,6 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Literal
 
-import httpx
-
-from gateway_auth import build_gateway_headers
 from .base import ImageEngine, ImageResult
 
 logger = logging.getLogger(__name__)
@@ -95,6 +92,7 @@ SITE_CONFIGS: dict[str, BrowserSiteConfig] = {
         url="https://chatgpt.com/",
 
         input_method="evaluate",
+        # {prompt} 是唯一占位符，其余 JS 大括号用 {{ }}
         prompt_evaluate_fn=(
             "(function(){{ var el = document.querySelector('#prompt-textarea');"
             " el.focus();"
@@ -103,21 +101,23 @@ SITE_CONFIGS: dict[str, BrowserSiteConfig] = {
         ),
 
         send_method="evaluate",
+        # 纯 JS，无占位符，用单大括号
         send_evaluate_fn=(
-            "(function(){{ var btn = document.querySelector("
+            "(function(){ var btn = document.querySelector("
             "'button[data-testid=\"send-button\"], button[aria-label=\"发送提示\"]');"
-            " if(btn){{ btn.click(); return 'sent' }} return 'not found' }})()"
+            " if(btn){ btn.click(); return 'sent' } return 'not found' })()"
         ),
 
         result_method="download",
         image_result_selector="article img",
+        # 纯 JS，无占位符，用单大括号
         image_download_evaluate_fn=(
-            "(async function(){{ var imgs = document.querySelectorAll("
+            "(function(){ var imgs = document.querySelectorAll("
             "'article img[src*=\"oaiusercontent\"], article img[src*=\"estuary\"]');"
-            " var urls = []; var seen = {{}};"
-            " for(var i=0;i<imgs.length;i++){{ var s=imgs[i].src;"
-            " if(!seen[s]){{ seen[s]=true; urls.push(s) }} }}"
-            " return JSON.stringify(urls) }})()"
+            " var urls = []; var seen = {};"
+            " for(var i=0;i<imgs.length;i++){ var s=imgs[i].src;"
+            " if(!seen[s]){ seen[s]=true; urls.push(s) } }"
+            " return JSON.stringify(urls) })()"
         ),
         image_download_cookies=True,
 
@@ -126,9 +126,10 @@ SITE_CONFIGS: dict[str, BrowserSiteConfig] = {
         post_send_wait_ms=45000,       # ChatGPT 图片生成需要 30-60s
         reconnect_on_navigate=True,     # 发送后 URL 变为 /c/xxx
 
+        # 纯 JS，无占位符
         completion_check_fn=(
-            "(function(){{ return !document.querySelector("
-            "'[data-testid=\"stop-button\"], button[aria-label*=\"停止\"]') }})()"
+            "(function(){ return !document.querySelector("
+            "'[data-testid=\"stop-button\"], button[aria-label*=\"停止\"]') })()"
         ),
     ),
 
@@ -443,6 +444,7 @@ class BrowserEngine(ImageEngine):
                 pass
 
         # 尝试用 httpx 下载
+        import httpx
         headers = {}
         if cookies:
             headers["Cookie"] = cookies
@@ -555,60 +557,192 @@ class BrowserEngine(ImageEngine):
     def _browser_evaluate(self, fn: str) -> str | None:
         """执行 JS evaluate 并返回结果"""
         result = self._browser_action("act", kind="evaluate", fn=fn)
-        return result.get("result")
+        # CLI 返回格式可能不同
+        return result.get("result") or result.get("value") or result.get("raw")
 
     def _screenshot_result(self, output_path: Path) -> bytes | None:
         """截取当前页面截图"""
         result = self._browser_action("screenshot", type="png", fullPage=False)
+
+        # CLI 模式：返回本地文件路径
+        if result.get("path"):
+            src = Path(result["path"])
+            if src.exists():
+                image_bytes = src.read_bytes()
+                output_path.write_bytes(image_bytes)
+                logger.info("browser_engine: screenshot saved %s (%d KB)", output_path, len(image_bytes) // 1024)
+                return image_bytes
+
+        # API 模式：返回 base64 data
         if result.get("data"):
             return base64.b64decode(result["data"])
-        # 有些返回里图片在 buffer 字段
         if result.get("buffer"):
             return base64.b64decode(result["buffer"])
+
+        logger.warning("browser_engine: screenshot returned no data: %s", list(result.keys()))
         return None
 
     def _browser_action(self, action: str, **kwargs) -> dict:
-        """调用 OpenClaw Gateway 的 browser tool"""
-        payload: dict = {
-            "action": action,
-            "profile": self.profile,
-        }
-        if self._target_id and action not in ("tabs", "status", "open"):
-            payload["targetId"] = self._target_id
-        payload.update(kwargs)
+        """
+        调用 OpenClaw browser tool
 
-        # act 类型的请求需要 request 包装
-        if action == "act":
-            request_data = {}
-            for key in ("kind", "fn", "selector", "text", "ref", "key",
-                        "timeoutMs", "url", "loadState"):
-                if key in payload:
-                    request_data[key] = payload.pop(key)
-            payload["request"] = request_data
+        使用 `openclaw browser` CLI（走 Gateway WebSocket 内部通道）。
+        不走 HTTP API（Gateway 没有暴露 /api/tools/browser 端点）。
+        """
+        import subprocess as _sp
+
+        cmd = ["openclaw", "browser", action, "--json", "--browser-profile", self.profile]
+
+        # 添加 targetId
+        target_id = kwargs.pop("targetId", None) or (
+            self._target_id if action not in ("tabs", "status", "open") else None
+        )
+
+        # 按 action 类型组装 CLI 参数
+        if action == "tabs":
+            pass  # 无额外参数
+
+        elif action == "status":
+            pass
+
+        elif action == "navigate":
+            url = kwargs.get("url", "")
+            if target_id:
+                cmd += ["--target-id", target_id]
+            if url:
+                cmd += [url]  # positional arg
+
+        elif action == "open":
+            url = kwargs.get("url", "")
+            if url:
+                cmd += [url]
+
+        elif action == "screenshot":
+            if target_id:
+                cmd += [target_id]  # positional arg
+            img_type = kwargs.get("type", "png")
+            cmd += ["--type", img_type]
+
+        elif action == "snapshot":
+            if target_id:
+                cmd += ["--target-id", target_id]
+            if kwargs.get("compact"):
+                cmd += ["--compact"]
+            if kwargs.get("selector"):
+                cmd += ["--selector", kwargs["selector"]]
+
+        elif action == "act":
+            # act 子命令需要特殊处理
+            kind = kwargs.get("kind", "")
+            if kind == "evaluate":
+                cmd = ["openclaw", "browser", "evaluate", "--json", "--browser-profile", self.profile]
+                if target_id:
+                    cmd += ["--target-id", target_id]
+                fn = kwargs.get("fn", "")
+                cmd += ["--fn", fn]
+            elif kind == "click":
+                cmd = ["openclaw", "browser", "click", "--json", "--browser-profile", self.profile]
+                if target_id:
+                    cmd += ["--target-id", target_id]
+                if kwargs.get("ref"):
+                    cmd += [kwargs["ref"]]  # positional ref arg
+                elif kwargs.get("selector"):
+                    cmd += ["--selector", kwargs["selector"]]
+            elif kind == "fill":
+                # `openclaw browser type <ref> <text>` — 但 fill by selector 不直接支持
+                # 用 evaluate 代替
+                selector = kwargs.get("selector", "")
+                text = kwargs.get("text", "").replace("'", "\\'")
+                fill_fn = (
+                    f"(function(){{ var el = document.querySelector('{selector}');"
+                    f" if(!el) return 'not found';"
+                    f" el.focus(); el.value = '{text}';"
+                    f" el.dispatchEvent(new Event('input', {{bubbles:true}}));"
+                    f" return 'filled' }})()"
+                )
+                cmd = ["openclaw", "browser", "evaluate", "--json", "--browser-profile", self.profile]
+                if target_id:
+                    cmd += ["--target-id", target_id]
+                cmd += ["--fn", fill_fn]
+            elif kind == "wait":
+                # wait 没有直接 CLI，用 eval 轮询
+                return self._poll_wait(
+                    kwargs.get("selector", ""),
+                    kwargs.get("timeoutMs", 30000),
+                )
+            else:
+                logger.warning("browser_action: unsupported act kind=%s", kind)
+                return {}
+        else:
+            logger.warning("browser_action: unknown action=%s", action)
+            return {}
+
+        # 执行 CLI
+        timeout_s = max(kwargs.get("timeoutMs", 30000) / 1000, 30)
+        logger.debug("browser_cli: %s", " ".join(cmd[:8]) + "...")
 
         try:
-            with httpx.Client(timeout=180) as client:
-                resp = client.post(
-                    f"{self.gateway_url}/api/tools/browser",
-                    json=payload,
-                    headers=build_gateway_headers(),
-                )
-                resp.raise_for_status()
-                return resp.json()
-        except httpx.HTTPStatusError as e:
-            logger.error("browser_action %s failed: %s %s", action, e.response.status_code, e.response.text[:200])
-            raise
+            result = _sp.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_s,
+            )
+            output = result.stdout.strip()
+
+            # 解析 JSON 输出（可能是多行 JSON）
+            # 先尝试整段解析
+            try:
+                return json.loads(output)
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+            # 尝试找 JSON 块（从第一个 { 或 [ 到最后一个 } 或 ]）
+            json_start = -1
+            for i, ch in enumerate(output):
+                if ch in ('{', '['):
+                    json_start = i
+                    break
+            if json_start >= 0:
+                try:
+                    return json.loads(output[json_start:])
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+            # 非 JSON 输出，包装返回
+            if result.returncode == 0:
+                return {"ok": True, "raw": output}
+            else:
+                stderr = result.stderr.strip()
+                logger.error("browser_cli failed: rc=%d stdout=%s stderr=%s", result.returncode, output[:200], stderr[:200])
+                return {"ok": False, "error": stderr or output}
+
+        except _sp.TimeoutExpired:
+            logger.error("browser_cli timeout: %s", " ".join(cmd[:6]))
+            raise RuntimeError(f"Browser CLI timeout: {action}")
         except Exception as e:
-            logger.error("browser_action %s failed: %s", action, e)
+            logger.error("browser_cli error: %s", e)
             raise
+
+    def _poll_wait(self, selector: str, timeout_ms: int) -> dict:
+        """轮询等待元素出现（CLI 没有 wait 子命令）"""
+        deadline = time.time() + timeout_ms / 1000
+        check_fn = f"(function(){{ return !!document.querySelector('{selector}') }})()"
+        while time.time() < deadline:
+            result = self._browser_action("act", kind="evaluate", fn=check_fn)
+            if str(result.get("result", "")).lower() in ("true", "1"):
+                return {"ok": True}
+            time.sleep(3)
+        return {"ok": False, "error": f"wait timeout: {selector}"}
 
     # ── 可用性检查 ──────────────────────────────────────────
 
     def is_available(self) -> bool:
         """检查浏览器 relay 是否连接"""
         try:
-            result = self._browser_action("status")
-            return result.get("cdpReady", False)
+            result = self._browser_action("tabs")
+            tabs = result.get("tabs", [])
+            return len(tabs) > 0
         except Exception:
             return False
 
