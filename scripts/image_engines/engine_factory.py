@@ -4,12 +4,13 @@
 支持：
   - 按名称创建: create_engine("pollinations")
   - 按配置创建: create_engine_from_config()
-  - 自动降级: Pollinations(默认) → DALL-E 3 → DashScope → 浏览器
+  - 自动降级: DALL-E 3 → DashScope → Pollinations(免费)
+  - 浏览器引擎: browser:chatgpt / browser:jimeng / browser:tongyi 等
 
 优先级说明:
-  Pollinations 是免费的，作为默认首选。
-  付费 API (DALL-E 3 / DashScope) 质量更高但需要 key。
-  浏览器模式(即梦) 质量最好但最慢且不稳定。
+  付费 API (DALL-E 3 / DashScope) 质量最高。
+  Pollinations 免费 fallback。
+  浏览器模式(ChatGPT / 即梦等) 质量好但慢且依赖 relay 连接。
 """
 
 from __future__ import annotations

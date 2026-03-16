@@ -1,41 +1,47 @@
 """
-浏览器代理引擎 — 通过 OpenClaw Browser Relay 控制网页端图片生成工具
+浏览器代理引擎 v2 — 通过 OpenClaw Browser Relay 控制网页端图片生成工具
+
+v2 改进（参考 chatgpt-browser skill 实测经验）:
+  - 支持 evaluate 方式输入（contenteditable 元素，如 ChatGPT）
+  - 支持 evaluate 方式发送（绕过 aria-ref 超时问题）
+  - 支持真实图片下载（不只是截图）
+  - 内置 relay 断连检测 + 自动重连
+  - 站点配置更灵活：自定义 step 序列
 
 适用场景：
-  - 无 API 的工具（Midjourney Web / Leonardo / Ideogram / 在线免费工具）
+  - 无 API 的工具（ChatGPT DALL-E / Midjourney Web / Leonardo / Ideogram）
   - 需要登录态的服务
   - 国内无法直连的 API（通过浏览器翻墙）
 
-原理：
-  1. 通过 OpenClaw browser tool 控制 Chrome
-  2. 导航到目标图片生成网站
-  3. 在输入框填入 prompt
-  4. 点击生成按钮
-  5. 等待图片出现
-  6. 截图或下载图片
-
 支持的网站（预置配置）：
-  - Midjourney (web)
-  - Leonardo.ai
-  - Ideogram.ai
+  - ChatGPT (chatgpt.com) — DALL-E 图片生成 ⭐ 新增
   - 通义万相 (tongyi.aliyun.com)
   - 即梦 (jimeng.jianying.com)
-  - 可灵 (klingai.kuaishou.com)
-
-也支持自定义网站配置。
+  - Ideogram (ideogram.ai)
+  - Leonardo.ai
 """
 
 from __future__ import annotations
 
+import base64
+import logging
 import os
+import re
 import time
 import json
-import subprocess
 from pathlib import Path
 from dataclasses import dataclass, field
+from typing import Literal
+
+import httpx
 
 from gateway_auth import build_gateway_headers
 from .base import ImageEngine, ImageResult
+
+logger = logging.getLogger(__name__)
+
+
+# ── 站点配置 ────────────────────────────────────────────────
 
 
 @dataclass
@@ -44,73 +50,156 @@ class BrowserSiteConfig:
     name: str
     url: str
 
-    # CSS 选择器
-    prompt_input_selector: str          # 提示词输入框
-    generate_button_selector: str       # 生成按钮
-    image_result_selector: str          # 生成结果图片
-    download_button_selector: str = ""  # 下载按钮（可选）
+    # ─ 输入方式 ─
+    input_method: Literal["fill", "evaluate"] = "fill"
+    # fill: 标准 CSS selector 填充（适用于 input/textarea）
+    # evaluate: JS evaluate 注入（适用于 contenteditable，如 ChatGPT）
 
-    # 等待时间
-    generation_timeout_ms: int = 60000  # 生成超时
-    load_wait_ms: int = 3000            # 页面加载等待
+    prompt_input_selector: str = ""          # fill 模式用
+    prompt_evaluate_fn: str = ""             # evaluate 模式用（JS 函数模板，{prompt} 占位符）
 
-    # 额外操作
-    negative_prompt_selector: str = ""  # 反向提示词输入框
-    size_selector: str = ""             # 尺寸选择器
-    pre_actions: list[dict] = field(default_factory=list)  # 生成前的额外操作
+    # ─ 发送方式 ─
+    send_method: Literal["click", "evaluate"] = "click"
+    generate_button_selector: str = ""       # click 模式用
+    send_evaluate_fn: str = ""               # evaluate 模式用
+
+    # ─ 结果提取 ─
+    result_method: Literal["screenshot", "download", "evaluate"] = "screenshot"
+    image_result_selector: str = ""          # screenshot/download 模式用（等待此元素出现）
+    image_download_evaluate_fn: str = ""     # evaluate 模式：返回图片 URL 数组的 JS
+    image_download_cookies: bool = False     # 是否需要 cookies 才能下载图片
+
+    # ─ 等待时间 ─
+    generation_timeout_ms: int = 60000       # 生成超时
+    load_wait_ms: int = 3000                 # 页面加载等待
+    post_send_wait_ms: int = 0               # 发送后额外等待（如 ChatGPT 需要 30-60s）
+
+    # ─ 其他 ─
+    negative_prompt_selector: str = ""
+    pre_actions: list[dict] = field(default_factory=list)
+    reconnect_on_navigate: bool = False      # 发送后 URL 变化导致 relay 断连
+    completion_check_fn: str = ""            # 检测生成是否完成的 JS（返回 true/false）
+
+    # ─ 下载代理 ─
+    download_proxy: str = ""                 # curl 下载时的代理（如 http://172.27.112.1:7890）
 
 
-# 预置网站配置
+# ── 预置站点 ────────────────────────────────────────────────
+
+
 SITE_CONFIGS: dict[str, BrowserSiteConfig] = {
+
+    # ⭐ ChatGPT — DALL-E 图片生成（参考 chatgpt-browser skill 实测）
+    "chatgpt": BrowserSiteConfig(
+        name="ChatGPT",
+        url="https://chatgpt.com/",
+
+        input_method="evaluate",
+        prompt_evaluate_fn=(
+            "(function(){{ var el = document.querySelector('#prompt-textarea');"
+            " el.focus();"
+            " document.execCommand('insertText', false, '{prompt}');"
+            " return el.textContent }})()"
+        ),
+
+        send_method="evaluate",
+        send_evaluate_fn=(
+            "(function(){{ var btn = document.querySelector("
+            "'button[data-testid=\"send-button\"], button[aria-label=\"发送提示\"]');"
+            " if(btn){{ btn.click(); return 'sent' }} return 'not found' }})()"
+        ),
+
+        result_method="download",
+        image_result_selector="article img",
+        image_download_evaluate_fn=(
+            "(async function(){{ var imgs = document.querySelectorAll("
+            "'article img[src*=\"oaiusercontent\"], article img[src*=\"estuary\"]');"
+            " var urls = []; var seen = {{}};"
+            " for(var i=0;i<imgs.length;i++){{ var s=imgs[i].src;"
+            " if(!seen[s]){{ seen[s]=true; urls.push(s) }} }}"
+            " return JSON.stringify(urls) }})()"
+        ),
+        image_download_cookies=True,
+
+        generation_timeout_ms=90000,
+        load_wait_ms=3000,
+        post_send_wait_ms=45000,       # ChatGPT 图片生成需要 30-60s
+        reconnect_on_navigate=True,     # 发送后 URL 变为 /c/xxx
+
+        completion_check_fn=(
+            "(function(){{ return !document.querySelector("
+            "'[data-testid=\"stop-button\"], button[aria-label*=\"停止\"]') }})()"
+        ),
+    ),
+
+    # 通义万相
     "tongyi": BrowserSiteConfig(
         name="通义万相",
         url="https://tongyi.aliyun.com/wanxiang/creation",
+        input_method="fill",
         prompt_input_selector="textarea[placeholder*='描述']",
+        send_method="click",
         generate_button_selector="button[class*='generate'], button:has-text('生成')",
+        result_method="screenshot",
         image_result_selector="img[class*='result'], img[class*='generated']",
         generation_timeout_ms=30000,
     ),
+
+    # 即梦 AI
     "jimeng": BrowserSiteConfig(
         name="即梦AI",
         url="https://jimeng.jianying.com/ai-tool/image/generate",
+        input_method="fill",
         prompt_input_selector="textarea",
+        send_method="click",
         generate_button_selector="button:has-text('生成')",
+        result_method="screenshot",
         image_result_selector="img[class*='result']",
         generation_timeout_ms=30000,
     ),
+
+    # Ideogram
     "ideogram": BrowserSiteConfig(
         name="Ideogram",
         url="https://ideogram.ai/t/create",
+        input_method="fill",
         prompt_input_selector="textarea[placeholder*='Describe']",
+        send_method="click",
         generate_button_selector="button:has-text('Generate')",
+        result_method="screenshot",
         image_result_selector="img[class*='generated'], img[alt*='Generated']",
         generation_timeout_ms=60000,
     ),
+
+    # Leonardo.ai
     "leonardo": BrowserSiteConfig(
         name="Leonardo.ai",
         url="https://app.leonardo.ai/ai-generations",
+        input_method="fill",
         prompt_input_selector="textarea[placeholder*='prompt']",
+        send_method="click",
         generate_button_selector="button:has-text('Generate')",
+        result_method="screenshot",
         image_result_selector="img[class*='generated']",
         generation_timeout_ms=60000,
     ),
 }
 
 
+# ── 引擎实现 ────────────────────────────────────────────────
+
+
 class BrowserEngine(ImageEngine):
     """
-    浏览器代理图片生成引擎
+    浏览器代理图片生成引擎 v2
 
-    通过 OpenClaw 的 browser tool 控制 Chrome 扩展。
+    通过 OpenClaw 的 browser tool (Chrome Relay) 控制浏览器。
+    支持两种输入模式、两种发送模式、三种结果提取模式。
+
     需要：
       1. Chrome 安装 OpenClaw Browser Relay 扩展
       2. 目标网站已登录
       3. OpenClaw Gateway 运行中
-
-    用法：
-      engine = BrowserEngine(site="tongyi")
-      # 或自定义配置
-      engine = BrowserEngine(site_config=BrowserSiteConfig(...))
     """
 
     engine_name = "browser"
@@ -132,7 +221,12 @@ class BrowserEngine(ImageEngine):
             raise ValueError(f"Unknown site: {site}. Available: {available}")
 
         self.profile = profile
-        self.gateway_url = gateway_url or os.environ.get("OPENCLAW_GATEWAY_URL", "http://localhost:18789")
+        self.gateway_url = gateway_url or os.environ.get(
+            "OPENCLAW_GATEWAY_URL", "http://localhost:18789"
+        )
+        self._target_id: str | None = None
+
+    # ── 主生成流程 ──────────────────────────────────────────
 
     def generate(
         self,
@@ -144,64 +238,43 @@ class BrowserEngine(ImageEngine):
         output_path: str | Path = "",
         **kwargs,
     ) -> ImageResult:
-        """
-        通过浏览器生成图片
-
-        流程：
-          1. 打开目标网站
-          2. 在输入框填入 prompt
-          3. 点击生成
-          4. 等待图片出现
-          5. 截图保存
-        """
+        """生成图片 — 完整流程"""
         start = time.time()
-        output_path = Path(output_path)
+        output_path = Path(output_path) if output_path else Path(f"/tmp/browser_gen_{int(time.time())}.png")
         output_path.parent.mkdir(parents=True, exist_ok=True)
         config = self.site_config
 
         try:
-            # Step 1: 导航到目标网站
-            self._browser_action("navigate", url=config.url)
+            # Step 1: 确保浏览器连接 + 找到/创建目标 tab
+            self._ensure_tab(config.url)
             time.sleep(config.load_wait_ms / 1000)
+            logger.info("browser_engine[%s]: page loaded, target=%s", config.name, self._target_id)
 
-            # Step 2: 执行预置操作（如关闭弹窗等）
+            # Step 2: 执行预置操作（关闭弹窗等）
             for action in config.pre_actions:
                 self._browser_action(**action)
 
-            # Step 3: 填入 prompt
-            self._browser_action(
-                "act",
-                kind="fill",
-                selector=config.prompt_input_selector,
-                text=prompt,
-            )
+            # Step 3: 输入 prompt
+            self._input_prompt(prompt)
 
-            # Step 4: 填入 negative prompt（如果有）
+            # Step 4: 输入 negative prompt
             if negative_prompt and config.negative_prompt_selector:
                 self._browser_action(
-                    "act",
-                    kind="fill",
+                    "act", kind="fill",
                     selector=config.negative_prompt_selector,
                     text=negative_prompt,
                 )
 
-            # Step 5: 点击生成
-            self._browser_action(
-                "act",
-                kind="click",
-                selector=config.generate_button_selector,
-            )
+            # Step 5: 发送 / 点击生成
+            self._send_generate()
 
-            # Step 6: 等待图片出现
-            self._browser_action(
-                "act",
-                kind="wait",
-                selector=config.image_result_selector,
-                timeoutMs=config.generation_timeout_ms,
-            )
+            # Step 6: 等待生成完成
+            self._wait_for_completion(config)
 
-            # Step 7: 截图保存
-            screenshot_result = self._browser_screenshot(output_path)
+            # Step 7: 提取结果
+            image_bytes = self._extract_result(output_path)
+            if image_bytes:
+                output_path.write_bytes(image_bytes)
 
             elapsed = int((time.time() - start) * 1000)
             return ImageResult(
@@ -213,11 +286,12 @@ class BrowserEngine(ImageEngine):
                 generation_time_ms=elapsed,
                 width=width,
                 height=height,
-                metadata={"site": config.name, "url": config.url},
+                metadata={"site": config.name, "url": config.url, "target_id": self._target_id},
             )
 
         except Exception as e:
             elapsed = int((time.time() - start) * 1000)
+            logger.error("browser_engine[%s]: generation failed: %s", config.name, e, exc_info=True)
             return ImageResult(
                 success=False,
                 engine=f"browser:{config.name}",
@@ -226,54 +300,317 @@ class BrowserEngine(ImageEngine):
                 error=str(e),
             )
 
-    def is_available(self) -> bool:
-        """检查浏览器连接是否可用"""
+    # ── 各步骤实现 ──────────────────────────────────────────
+
+    def _ensure_tab(self, url: str):
+        """确保有可用的 tab 连接到目标网站"""
+        tabs = self._get_tabs()
+        domain = re.sub(r'https?://', '', url).split('/')[0]
+
+        # 找已有的匹配 tab
+        for tab in tabs:
+            if domain in tab.get("url", ""):
+                self._target_id = tab["targetId"]
+                logger.info("browser_engine: reusing existing tab %s", self._target_id)
+                return
+
+        # 没有则打开新 tab
+        result = self._browser_action("open", url=url)
+        if result.get("ok") and result.get("targetId"):
+            self._target_id = result["targetId"]
+        else:
+            # fallback: 重新获取 tabs
+            time.sleep(3)
+            tabs = self._get_tabs()
+            for tab in tabs:
+                if domain in tab.get("url", ""):
+                    self._target_id = tab["targetId"]
+                    return
+            raise RuntimeError(f"Failed to open tab for {url}")
+
+    def _input_prompt(self, prompt: str):
+        """输入提示词"""
+        config = self.site_config
+        safe_prompt = prompt.replace("'", "\\'").replace('"', '\\"').replace("\n", "\\n")
+
+        if config.input_method == "evaluate":
+            fn = config.prompt_evaluate_fn.format(prompt=safe_prompt)
+            result = self._browser_evaluate(fn)
+            logger.info("browser_engine: evaluate input result: %s", result)
+        else:
+            self._browser_action(
+                "act", kind="fill",
+                selector=config.prompt_input_selector,
+                text=prompt,
+            )
+
+    def _send_generate(self):
+        """点击发送/生成按钮"""
+        config = self.site_config
+
+        if config.send_method == "evaluate":
+            result = self._browser_evaluate(config.send_evaluate_fn)
+            logger.info("browser_engine: evaluate send result: %s", result)
+            if result and "not found" in str(result).lower():
+                raise RuntimeError("Send button not found")
+        else:
+            self._browser_action(
+                "act", kind="click",
+                selector=config.generate_button_selector,
+            )
+
+    def _wait_for_completion(self, config: BrowserSiteConfig):
+        """等待图片生成完成"""
+        # 固定等待（如 ChatGPT 需要较长时间）
+        if config.post_send_wait_ms > 0:
+            wait_s = config.post_send_wait_ms / 1000
+            logger.info("browser_engine: waiting %.1fs for generation...", wait_s)
+            time.sleep(wait_s)
+
+        # 如果发送后 URL 变化导致 relay 断连，尝试重连
+        if config.reconnect_on_navigate:
+            self._reconnect_relay()
+
+        # 轮询检测完成状态
+        if config.completion_check_fn:
+            deadline = time.time() + config.generation_timeout_ms / 1000
+            while time.time() < deadline:
+                try:
+                    result = self._browser_evaluate(config.completion_check_fn)
+                    if result and str(result).lower() in ("true", "1"):
+                        logger.info("browser_engine: generation completed")
+                        return
+                except Exception:
+                    pass
+                time.sleep(3)
+            logger.warning("browser_engine: completion check timed out, proceeding anyway")
+
+        # 无 completion_check，等待图片元素出现
+        elif config.image_result_selector:
+            try:
+                self._browser_action(
+                    "act", kind="wait",
+                    selector=config.image_result_selector,
+                    timeoutMs=config.generation_timeout_ms,
+                )
+            except Exception as e:
+                logger.warning("browser_engine: wait for result element failed: %s", e)
+
+    def _extract_result(self, output_path: Path) -> bytes | None:
+        """提取生成的图片"""
+        config = self.site_config
+
+        if config.result_method == "download":
+            return self._download_image(output_path)
+        elif config.result_method == "evaluate":
+            return self._evaluate_extract_image()
+        else:
+            return self._screenshot_result(output_path)
+
+    # ── 图片下载（新增，参考 chatgpt-browser skill） ─────────
+
+    def _download_image(self, output_path: Path) -> bytes | None:
+        """从页面提取真实图片 URL 并下载"""
+        config = self.site_config
+
+        # Step 1: 用 evaluate 获取图片 URL
+        if config.image_download_evaluate_fn:
+            raw = self._browser_evaluate(config.image_download_evaluate_fn)
+            try:
+                urls = json.loads(raw) if isinstance(raw, str) else raw
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("browser_engine: failed to parse image URLs: %s", raw)
+                # fallback 到截图
+                return self._screenshot_result(output_path)
+        else:
+            logger.warning("browser_engine: no download evaluate fn, falling back to screenshot")
+            return self._screenshot_result(output_path)
+
+        if not urls:
+            logger.warning("browser_engine: no image URLs found, falling back to screenshot")
+            return self._screenshot_result(output_path)
+
+        # Step 2: 下载第一张图片
+        image_url = urls[0] if isinstance(urls, list) else urls
+        logger.info("browser_engine: downloading image from %s", image_url[:100])
+
+        # 获取 cookies（如果需要）
+        cookies = ""
+        if config.image_download_cookies:
+            try:
+                cookies = self._browser_evaluate("(function(){ return document.cookie })()")
+            except Exception:
+                pass
+
+        # 尝试用 httpx 下载
+        headers = {}
+        if cookies:
+            headers["Cookie"] = cookies
+
         try:
-            # 简单检查 gateway 是否响应
-            import httpx
-            resp = httpx.get(f"{self.gateway_url}/api/status", timeout=5, headers=build_gateway_headers())
-            return resp.status_code == 200
+            with httpx.Client(timeout=120, follow_redirects=True) as client:
+                resp = client.get(image_url, headers=headers)
+                resp.raise_for_status()
+                return resp.content
+        except Exception as e:
+            logger.warning("browser_engine: httpx download failed: %s, trying curl", e)
+
+        # Fallback: curl 下载（支持代理）
+        try:
+            import subprocess
+            cmd = ["curl", "-sS", "-L", "-o", str(output_path)]
+            if cookies:
+                cmd += ["-H", f"Cookie: {cookies}"]
+            if config.download_proxy:
+                cmd += ["-x", config.download_proxy]
+            cmd.append(image_url)
+
+            result = subprocess.run(cmd, capture_output=True, timeout=120)
+            if result.returncode == 0 and output_path.exists():
+                return output_path.read_bytes()
+        except Exception as e:
+            logger.warning("browser_engine: curl download failed: %s", e)
+
+        # Final fallback: 截图
+        logger.warning("browser_engine: all download methods failed, falling back to screenshot")
+        return self._screenshot_result(output_path)
+
+    # ── Relay 重连 ──────────────────────────────────────────
+
+    def _reconnect_relay(self):
+        """
+        发送后 URL 变化导致 relay 断连时尝试重连
+
+        策略：
+        1. 先尝试直接操作（可能没断）
+        2. 如果 tab not found，重新获取 tabs 找到新 targetId
+        3. 如果还不行，尝试运行 relay 激活脚本
+        """
+        # 先测试当前连接
+        try:
+            result = self._browser_evaluate("document.title")
+            if result:
+                logger.info("browser_engine: relay still connected, title=%s", result)
+                return
         except Exception:
-            return False
+            pass
+
+        logger.info("browser_engine: relay disconnected, attempting reconnect...")
+
+        # 重新获取 tabs
+        tabs = self._get_tabs()
+        config = self.site_config
+        domain = re.sub(r'https?://', '', config.url).split('/')[0]
+
+        for tab in tabs:
+            tab_url = tab.get("url", "")
+            if domain in tab_url:
+                old_id = self._target_id
+                self._target_id = tab["targetId"]
+                logger.info(
+                    "browser_engine: found tab %s -> %s (url: %s)",
+                    old_id, self._target_id, tab_url
+                )
+                # 测试新 targetId
+                try:
+                    result = self._browser_evaluate("document.title")
+                    if result:
+                        logger.info("browser_engine: reconnected successfully")
+                        return
+                except Exception:
+                    pass
+
+        # 尝试运行 relay 激活脚本
+        try:
+            import subprocess
+            script_path = Path(__file__).parent.parent.parent / "skills" / "browser-relay-activator" / "scripts" / "connect.sh"
+            if script_path.exists():
+                logger.info("browser_engine: running relay activator script...")
+                result = subprocess.run(
+                    ["bash", str(script_path)],
+                    capture_output=True, timeout=45,
+                    cwd=str(script_path.parent.parent),
+                )
+                if result.returncode == 0:
+                    time.sleep(3)
+                    # 重新获取 tabs
+                    tabs = self._get_tabs()
+                    for tab in tabs:
+                        if domain in tab.get("url", ""):
+                            self._target_id = tab["targetId"]
+                            logger.info("browser_engine: reconnected via script, target=%s", self._target_id)
+                            return
+        except Exception as e:
+            logger.warning("browser_engine: relay script failed: %s", e)
+
+        logger.warning("browser_engine: reconnect failed, continuing with best effort")
+
+    # ── 底层浏览器操作 ──────────────────────────────────────
+
+    def _get_tabs(self) -> list[dict]:
+        """获取当前 Chrome tab 列表"""
+        result = self._browser_action("tabs")
+        return result.get("tabs", [])
+
+    def _browser_evaluate(self, fn: str) -> str | None:
+        """执行 JS evaluate 并返回结果"""
+        result = self._browser_action("act", kind="evaluate", fn=fn)
+        return result.get("result")
+
+    def _screenshot_result(self, output_path: Path) -> bytes | None:
+        """截取当前页面截图"""
+        result = self._browser_action("screenshot", type="png", fullPage=False)
+        if result.get("data"):
+            return base64.b64decode(result["data"])
+        # 有些返回里图片在 buffer 字段
+        if result.get("buffer"):
+            return base64.b64decode(result["buffer"])
+        return None
 
     def _browser_action(self, action: str, **kwargs) -> dict:
-        """
-        调用 OpenClaw browser tool
-
-        这里用 HTTP API 直接调用 Gateway 的 browser 工具。
-        生产环境可替换为 OpenClaw SDK 调用。
-        """
-        # 方案 A: 通过 OpenClaw Gateway HTTP API
-        import httpx
-
-        payload = {
+        """调用 OpenClaw Gateway 的 browser tool"""
+        payload: dict = {
             "action": action,
             "profile": self.profile,
-            **kwargs,
         }
+        if self._target_id and action not in ("tabs", "status", "open"):
+            payload["targetId"] = self._target_id
+        payload.update(kwargs)
 
-        with httpx.Client(timeout=120) as client:
-            resp = client.post(
-                f"{self.gateway_url}/api/tools/browser",
-                json=payload,
-                headers=build_gateway_headers(),
-            )
-            resp.raise_for_status()
-            return resp.json()
+        # act 类型的请求需要 request 包装
+        if action == "act":
+            request_data = {}
+            for key in ("kind", "fn", "selector", "text", "ref", "key",
+                        "timeoutMs", "url", "loadState"):
+                if key in payload:
+                    request_data[key] = payload.pop(key)
+            payload["request"] = request_data
 
-    def _browser_screenshot(self, output_path: Path) -> dict:
-        """截取当前页面截图"""
-        result = self._browser_action(
-            "screenshot",
-            type="png",
-            fullPage=False,
-        )
-        # 结果中应包含 base64 图片数据
-        if "data" in result:
-            import base64
-            image_bytes = base64.b64decode(result["data"])
-            output_path.write_bytes(image_bytes)
-        return result
+        try:
+            with httpx.Client(timeout=180) as client:
+                resp = client.post(
+                    f"{self.gateway_url}/api/tools/browser",
+                    json=payload,
+                    headers=build_gateway_headers(),
+                )
+                resp.raise_for_status()
+                return resp.json()
+        except httpx.HTTPStatusError as e:
+            logger.error("browser_action %s failed: %s %s", action, e.response.status_code, e.response.text[:200])
+            raise
+        except Exception as e:
+            logger.error("browser_action %s failed: %s", action, e)
+            raise
+
+    # ── 可用性检查 ──────────────────────────────────────────
+
+    def is_available(self) -> bool:
+        """检查浏览器 relay 是否连接"""
+        try:
+            result = self._browser_action("status")
+            return result.get("cdpReady", False)
+        except Exception:
+            return False
 
     @classmethod
     def list_sites(cls) -> list[str]:
@@ -289,5 +626,7 @@ class BrowserEngine(ImageEngine):
         return {
             "name": config.name,
             "url": config.url,
+            "input_method": config.input_method,
+            "result_method": config.result_method,
             "timeout_ms": config.generation_timeout_ms,
         }
