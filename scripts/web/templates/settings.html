@@ -109,7 +109,7 @@
                 <label class="w-28 text-sm text-slate-300">频道 ID</label>
                 <input type="text" name="notify_channel"
                        value="{{ notify_channel }}"
-                       placeholder="Discord/KOOK 频道 ID（留空不通知）"
+                       placeholder="platform:target（如 feishu:oc_xxx, discord:123）"
                        class="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm placeholder-slate-600 focus:border-sky-500 focus:outline-none"
                        id="settings-notify-channel">
                 <button type="button" onclick="loadChannelsForSettings()"
@@ -126,7 +126,7 @@
             </div>
             <p class="text-xs text-slate-500 ml-32">
                 Pipeline 事件（等待审核、完成、失败）会推送到此频道。
-                目前支持 Discord。
+                支持 Discord / 飞书 / KOOK / 企业微信等所有已接入平台。
             </p>
         </div>
     </div>
@@ -137,7 +137,7 @@
 
         {% set current_engine = pipeline.get('image_engine', 'auto') %}
         <div class="space-y-2">
-            {% for value, label in [('auto', '自动选择'), ('dall-e-3', 'API: DALL-E 3'), ('dashscope', 'API: DashScope 通义万相'), ('browser:tongyi', '浏览器: 通义万相'), ('browser:jimeng', '浏览器: 即梦AI')] %}
+            {% for value, label in [('auto', '自动选择'), ('dall-e-3', 'API: DALL-E 3'), ('dashscope', 'API: DashScope 通义万相'), ('pollinations', 'API: Pollinations (免费)'), ('browser:chatgpt', '浏览器: ChatGPT (DALL-E)'), ('browser:tongyi', '浏览器: 通义万相'), ('browser:jimeng', '浏览器: 即梦AI')] %}
             <label class="flex items-center gap-3 cursor-pointer p-2 rounded hover:bg-slate-800">
                 <input type="radio" name="image_engine" value="{{ value }}"
                        {% if current_engine == value %}checked{% endif %}
@@ -295,10 +295,35 @@ async function loadChannelsForSettings() {
         var data = await resp.json();
         if (data.channels && data.channels.length > 0) {
             sel.innerHTML = '<option value="">选择频道...</option>';
+            // 按平台分组
+            var byProvider = {};
             data.channels.forEach(function(ch) {
-                var opt = document.createElement('option');
-                opt.value = ch.id; opt.textContent = ch.label;
-                sel.appendChild(opt);
+                var p = ch.provider || 'other';
+                if (!byProvider[p]) byProvider[p] = [];
+                byProvider[p].push(ch);
+            });
+            // 平台排序：飞书 > discord > kook > wecom > other
+            var order = ['feishu', 'discord', 'kook', 'wecom'];
+            Object.keys(byProvider).forEach(function(p) { if (order.indexOf(p) < 0) order.push(p); });
+            order.forEach(function(provider) {
+                var chs = byProvider[provider];
+                if (!chs) return;
+                var grp = document.createElement('optgroup');
+                grp.label = provider.charAt(0).toUpperCase() + provider.slice(1);
+                chs.forEach(function(ch) {
+                    var opt = document.createElement('option');
+                    // 值为 "provider:id" 格式，与 notify.py _parse_channel_target 一致
+                    var channelId = ch.id;
+                    // wecom id 可能已包含 provider 前缀
+                    if (channelId.indexOf(':') >= 0) {
+                        opt.value = channelId;
+                    } else {
+                        opt.value = provider + ':' + channelId;
+                    }
+                    opt.textContent = ch.label;
+                    grp.appendChild(opt);
+                });
+                sel.appendChild(grp);
             });
             picker.classList.remove('hidden');
         }
