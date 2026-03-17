@@ -272,6 +272,65 @@ PY
 EOF
 }
 
+install_service() {
+    local service_name="contentpipe"
+    local service_file="/etc/systemd/system/${service_name}.service"
+    local current_user
+    current_user="$(whoami)"
+
+    echo "🔧 生成 systemd service: $service_name"
+    echo "   用户: $current_user"
+    echo "   工作目录: $PLUGIN_DIR/scripts"
+    echo "   Python: $PYTHON_BIN"
+    echo "   端口: $PORT"
+
+    check_runtime_python
+
+    cat > "/tmp/${service_name}.service" <<EOF
+[Unit]
+Description=ContentPipe — AI 图文内容生产线
+After=network.target clawdbot.service
+Wants=clawdbot.service
+
+[Service]
+Type=simple
+User=${current_user}
+WorkingDirectory=${PLUGIN_DIR}/scripts
+ExecStart=${PYTHON_BIN} -m uvicorn web.app:app --host ${HOST} --port ${PORT}
+Environment="PYTHONPATH=."
+Environment="PATH=${PATH}"
+EnvironmentFile=-${PLUGIN_DIR}/.env.local
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    if [ -w /etc/systemd/system/ ] 2>/dev/null; then
+        cp "/tmp/${service_name}.service" "$service_file"
+    else
+        echo "⚠️  需要 sudo 权限安装 service"
+        sudo cp "/tmp/${service_name}.service" "$service_file"
+    fi
+    rm -f "/tmp/${service_name}.service"
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable "${service_name}.service"
+
+    echo ""
+    echo "✅ systemd service 已安装并启用"
+    echo ""
+    echo "管理命令:"
+    echo "  sudo systemctl start contentpipe    # 启动"
+    echo "  sudo systemctl stop contentpipe     # 停止"
+    echo "  sudo systemctl restart contentpipe  # 重启"
+    echo "  sudo systemctl status contentpipe   # 状态"
+    echo "  journalctl -u contentpipe -f        # 日志"
+    echo ""
+    echo "开机自启: ✅ 已启用（跟随 clawdbot.service 之后启动）"
+}
+
 case "${1:-start}" in
     start)
         service_start
@@ -299,8 +358,12 @@ case "${1:-start}" in
         install_agent
         ;;
 
+    install-service)
+        install_service
+        ;;
+
     *)
-        echo "用法: $0 {start|stop|restart|status|logs|install-agent}"
+        echo "用法: $0 {start|stop|restart|status|logs|install-agent|install-service}"
         exit 1
         ;;
 esac
