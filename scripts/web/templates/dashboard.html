@@ -51,67 +51,59 @@
 {% endif %}
 
 <!-- 最近运行 -->
-<div class="card p-5">
+<div class="mb-8">
     <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-widest mb-4">📋 最近运行</h2>
     {% if stats.recent_runs %}
-    <div class="overflow-x-auto">
-        <table class="w-full data-table">
-            <thead>
-                <tr>
-                    <th class="text-left">Run ID</th>
-                    <th class="text-left">标题</th>
-                    <th class="text-left">状态</th>
-                    <th class="text-left">阶段</th>
-                    <th class="text-left">平台</th>
-                    <th class="text-left">进度</th>
-                    <th class="text-right">操作</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for run in stats.recent_runs %}
-                <tr>
-                    <td class="font-mono text-xs text-slate-500">{{ run.run_id[-12:] }}</td>
-                    <td class="text-white font-medium text-sm">{{ run._title[:30] }}</td>
-                    <td>
-                        {% if run.status == 'completed' %}
-                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">✅ 完成</span>
-                        {% elif run.status == 'running' %}
-                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 pulse-dot">🔵 运行中</span>
-                        {% elif run.status == 'review' %}
-                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-amber-500/10 text-amber-400 border border-amber-500/20">⏸ 待审核</span>
-                        {% elif run.status == 'failed' %}
-                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-red-500/10 text-red-400 border border-red-500/20">❌ 失败</span>
-                        {% elif run.status == 'cancelled' %}
-                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-slate-500/10 text-slate-400 border border-slate-500/20">🚫 已取消</span>
-                        {% else %}
-                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-slate-500/10 text-slate-400 border border-slate-500/20">⏳ {{ run.status }}</span>
-                        {% endif %}
-                    </td>
-                    <td class="text-slate-500 text-xs">{{ run.current_stage or '-' }}</td>
-                    <td class="text-slate-500 text-xs">{{ run.platform or '-' }}</td>
-                    <td>
-                        <div class="progress-bar w-20 h-1.5">
+    <div class="space-y-3">
+        {% for run in stats.recent_runs %}
+        <div class="card card-hover block p-5 rounded-xl">
+            <div class="flex items-center justify-between">
+                <a href="/runs/{{ run.run_id }}" class="flex items-center gap-4 flex-1 min-w-0">
+                    <!-- 状态图标 -->
+                    <div class="text-2xl shrink-0">
+                        {% if run.status == 'completed' %}✅
+                        {% elif run.status == 'running' %}🔄
+                        {% elif run.status == 'review' %}⏸️
+                        {% elif run.status == 'failed' %}❌
+                        {% elif run.status == 'cancelled' %}🚫
+                        {% else %}⏳{% endif %}
+                    </div>
+
+                    <div class="min-w-0 flex-1">
+                        <p class="text-white font-medium truncate">{{ run._title }}</p>
+                        <p class="text-xs text-slate-500 mt-1">
+                            {{ run.run_id }} · {{ run.platform or '-' }} · {{ run.current_stage or '未开始' }}
+                        </p>
+                    </div>
+
+                    <!-- 进度条 -->
+                    <div class="flex items-center gap-2 shrink-0 hidden md:flex">
+                        <div class="progress-bar w-24 h-1.5">
                             <div class="progress-fill h-1.5" style="width: {{ run._progress }}%"></div>
                         </div>
-                    </td>
-                    <td class="text-right whitespace-nowrap">
-                        <a href="/runs/{{ run.run_id }}" class="btn-secondary px-2.5 py-1 text-xs inline-block">查看</a>
-                        {% if run.status in ['running', 'review', 'pending'] %}
-                        <button onclick="doAction('/api/runs/{{ run.run_id }}/cancel', '确定暂停此 Run？')"
-                                class="btn-warn px-2.5 py-1 text-xs ml-1.5" title="暂停">⏸ 暂停</button>
-                        {% endif %}
-                        {% if run.status not in ['running'] %}
-                        <button onclick="doAction('/api/runs/{{ run.run_id }}/delete', '确定删除此 Run？此操作不可恢复。')"
-                                class="btn-danger px-2.5 py-1 text-xs ml-1.5" title="删除">🗑 删除</button>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-            </tbody>
-        </table>
+                        <span class="text-xs text-slate-600 w-8 text-right">{{ run._progress }}%</span>
+                    </div>
+                </a>
+
+                <div class="flex items-center gap-2 shrink-0 ml-4">
+                    {% if run.status in ['running', 'review', 'pending'] %}
+                    <button onclick="event.preventDefault(); event.stopPropagation(); doAction('/api/runs/{{ run.run_id }}/cancel', '确定暂停此 Run？')"
+                            class="btn-warn px-2.5 py-1.5 text-xs" title="暂停">⏸</button>
+                    {% endif %}
+                    {% if run.status not in ['running'] %}
+                    <button onclick="event.preventDefault(); event.stopPropagation(); doAction('/api/runs/{{ run.run_id }}/delete', '确定删除？不可恢复。')"
+                            class="btn-danger px-2.5 py-1.5 text-xs" title="删除">🗑</button>
+                    {% endif %}
+                    <a href="/runs/{{ run.run_id }}" class="text-slate-600 hover:text-slate-400 transition text-lg">→</a>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
     </div>
     {% else %}
-    <p class="text-slate-600 text-center py-12">暂无运行记录。点击右上角「新建 Run」开始。</p>
+    <div class="card p-5">
+        <p class="text-slate-600 text-center py-12">暂无运行记录。点击右上角「新建 Run」开始。</p>
+    </div>
     {% endif %}
 </div>
 
