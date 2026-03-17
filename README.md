@@ -214,13 +214,99 @@ plugins/content-pipeline/output/runs/<run_id>/
 
 ---
 
-## 4. 运行要求
+## 4. 作为 OpenClaw 插件安装
+
+### 4.0 快速安装（5 步完成）
+
+```bash
+# ① 克隆到 OpenClaw workspace 的 plugins 目录
+cd ~/your-openclaw-workspace/plugins   # 替换成你的 workspace 路径
+git clone https://github.com/PPPPanda/contentPipe.git content-pipeline
+cd content-pipeline
+
+# ② 安装 Python 依赖
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+# ③ 创建本地配置（填入你的密钥和偏好）
+cp .env.example .env.local
+# 编辑 .env.local，至少填写：
+#   CONTENTPIPE_AUTH_TOKEN=你的访问密码
+#   OPENCLAW_GATEWAY_URL=http://localhost:18789（默认值）
+
+# ④ 注册 blank agent + 重启 Gateway
+./start.sh install-agent
+openclaw gateway restart
+
+# ⑤ 启动 ContentPipe
+./start.sh start
+```
+
+打开 `http://localhost:8765`，看到 Setup 向导即安装成功。
+
+### 4.0.1 安装后还需要做什么？
+
+| 步骤 | 说明 | 必须？ |
+|------|------|--------|
+| **Setup 向导** | 首次访问 Web UI 会自动进入，引导你选择模型和通知频道 | ✅ |
+| **通知频道** | 在设置页选择通知目标（飞书/Discord/KOOK/企微），点"测试发送"验证 | 推荐 |
+| **开机自启** | `./start.sh install-service`，生成 systemd service | 推荐 |
+| **微信发布** | 在设置页填写 `WECHAT_APPID` / `WECHAT_SECRET` + 添加 IP 白名单 | 可选 |
+| **图片引擎** | 设置页选择图片生成方式（API / 浏览器） | 可选 |
+| **鉴权** | `.env.local` 设置 `CONTENTPIPE_AUTH_TOKEN`，Web UI 会要求登录 | 推荐 |
+
+### 4.0.2 目录放在哪？
+
+ContentPipe 作为 OpenClaw 插件，推荐放在 workspace 的 `plugins/` 下：
+
+```text
+your-openclaw-workspace/
+├─ AGENTS.md
+├─ SOUL.md
+├─ plugins/
+│  └─ content-pipeline/    ← 本项目
+│     ├─ openclaw.plugin.yaml
+│     ├─ start.sh
+│     ├─ scripts/
+│     ├─ skills/
+│     └─ config/
+```
+
+也可以放在任意位置，只要 `./start.sh install-agent` 能正确注册 skill 路径到 Gateway。
+
+### 4.0.3 Gateway chatCompletions 端点
+
+ContentPipe 通过 Gateway 的 `/v1/chat/completions` 端点调用 LLM。如果你的 Gateway 是默认配置，**这个端点可能没有启用**。
+
+检查方法：
+```bash
+curl -s -o /dev/null -w "%{http_code}" http://localhost:18789/v1/chat/completions
+# 如果返回 404，说明端点未启用
+```
+
+启用方法（在 `~/.openclaw/openclaw.json` 中添加）：
+```json
+{
+  "gateway": {
+    "http": {
+      "endpoints": {
+        "chatCompletions": { "enabled": true }
+      }
+    }
+  }
+}
+```
+
+然后重启 Gateway：`openclaw gateway restart`
+
+---
 
 ### 4.1 系统依赖
 
 - Python 3.10+
-- OpenClaw Gateway
-- 可选：Discord channel 配置
+- OpenClaw Gateway（已启用 chatCompletions 端点）
+- 可选：飞书 / Discord / KOOK / 企微通知
 - 可选：微信公众号 / 小红书发布配置
 
 ### 4.2 Python 依赖
