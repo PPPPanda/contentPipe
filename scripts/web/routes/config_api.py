@@ -210,7 +210,8 @@ async def api_set_notify(request: Request):
     """设置通知频道
 
     ```json
-    {"notify_channel": "1480223789626294466", "public_base_url": "https://my-server:8765"}
+    {"notify_channel": "discord:1480223789626294466", "public_base_url": "https://my-server:8765"}
+    格式: "<platform>:<target>" (例: "feishu:oc_xxx", "discord:123456", "kook:123456")
     ```
     """
     body = await request.json()

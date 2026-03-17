@@ -1,25 +1,32 @@
 """
-ContentPipe — Discord 通知集成
+ContentPipe — 多平台通知集成
 
-通过 OpenClaw Gateway 的 message API 向 Discord 频道推送 Pipeline 事件。
-审核通知内嵌结构化摘要 + 操作指引，Agent 自动识别进入桥接模式。
+通过 OpenClaw Gateway 的 `openclaw message send` CLI 向任意已接入的频道推送 Pipeline 事件。
+支持 Discord / 飞书 / KOOK / 企业微信等所有 OpenClaw 已接入平台。
+
+配置格式（CONTENTPIPE_NOTIFY_CHANNEL 环境变量或 Web 设置页）:
+  "<platform>:<target>"  — 推荐格式，明确指定平台和目标
+    例: "feishu:oc_306c296f6726924d578289ecd911fbe9"
+         "discord:1480223789626294466"
+         "kook:3968623244573582"
+
+  "<target>"             — 兼容旧格式（纯 target ID），默认走 discord
+    例: "1480223789626294466" → discord
+
+所有通知最终通过 `openclaw message send --channel <platform> --target <target>` 发送，
+由 OpenClaw Gateway 负责平台路由和认证，ContentPipe 不感知具体平台 API。
 """
 
 from __future__ import annotations
 
 import os
 import json
-import httpx
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
-from gateway_auth import build_gateway_headers
 from logutil import get_logger
 
 # 动态读取配置 — 支持运行时修改，无需重启
-def _get_gateway_url() -> str:
-    return os.environ.get("OPENCLAW_GATEWAY_URL", "") or _read_config_val("gateway_url", "http://localhost:18789")
-
 def _get_notify_channel() -> str:
     return os.environ.get("CONTENTPIPE_NOTIFY_CHANNEL", "") or _read_config_val("notify_channel", "")
 
@@ -40,6 +47,38 @@ def _read_config_val(key: str, default: str = "") -> str:
     return default
 
 logger = get_logger(__name__)
+
+
+def _parse_channel_target(raw: str) -> Tuple[str, str]:
+    """解析 'platform:target' 格式的通知频道配置。
+
+    Returns:
+        (platform, target) 元组
+
+    Examples:
+        "feishu:oc_xxx"           → ("feishu", "oc_xxx")
+        "discord:1480223789626"   → ("discord", "1480223789626")
+        "kook:123456"             → ("kook", "123456")
+        "1480223789626"           → ("discord", "1480223789626")  # 兼容旧格式
+        ""                        → ("", "")
+    """
+    if not raw:
+        return ("", "")
+
+    # 支持的平台名（与 openclaw message send --channel 参数一致）
+    KNOWN_PLATFORMS = {
+        "discord", "feishu", "kook", "telegram", "wecom",
+        "slack", "whatsapp", "signal", "line", "googlechat",
+        "irc", "imessage", "msteams", "mattermost",
+    }
+
+    if ":" in raw:
+        platform, target = raw.split(":", 1)
+        if platform.lower() in KNOWN_PLATFORMS:
+            return (platform.lower(), target)
+
+    # 兼容旧格式：纯 target ID，默认 discord
+    return ("discord", raw)
 
 # 节点 emoji
 NODE_EMOJI = {
@@ -256,62 +295,6 @@ def _summary_formatter(run_id: str, state: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
-# ── Discord 通知 ────────────────────────────────────────────────────
-
-def _get_discord_bot_token() -> str:
-    """获取 Discord bot token（env 优先，fallback 到 openclaw.json）"""
-    # 1. 环境变量（Docker / 云端部署推荐）
-    token = os.environ.get("DISCORD_BOT_TOKEN", "").strip()
-    if token:
-        return token
-    # 2. openclaw.json（本地 OpenClaw 部署）
-    try:
-        cfg_path = Path.home() / ".openclaw" / "openclaw.json"
-        if cfg_path.exists():
-            import json as _json
-            cfg = _json.loads(cfg_path.read_text())
-            return str(cfg.get("channels", {}).get("discord", {}).get("token", ""))
-    except Exception:
-        pass
-    return ""
-
-
-def _get_discord_proxy() -> str:
-    """获取 Discord proxy（env 优先，fallback 到 openclaw.json）"""
-    # 1. 环境变量
-    proxy = os.environ.get("DISCORD_PROXY", "").strip()
-    if proxy:
-        return proxy
-    # 2. HTTPS_PROXY（通用代理）
-    proxy = os.environ.get("HTTPS_PROXY", "").strip() or os.environ.get("https_proxy", "").strip()
-    if proxy:
-        return proxy
-    # 3. openclaw.json
-    try:
-        cfg_path = Path.home() / ".openclaw" / "openclaw.json"
-        if cfg_path.exists():
-            import json as _json
-            cfg = _json.loads(cfg_path.read_text())
-            return str(cfg.get("channels", {}).get("discord", {}).get("proxy", ""))
-    except Exception:
-        pass
-    return ""
-
-
-def _detect_channel_platform(channel_id: str) -> str:
-    """根据频道 ID 格式自动检测平台。
-
-    飞书群聊: oc_xxx
-    飞书用户: ou_xxx
-    Discord: 纯数字
-    KOOK: 纯数字（但通常由配置指定 channel=kook）
-    """
-    if channel_id.startswith("oc_") or channel_id.startswith("ou_"):
-        return "feishu"
-    if channel_id.isdigit():
-        return "discord"
-    return "discord"  # fallback
-
 
 async def notify_discord(
     message: str,
@@ -321,42 +304,39 @@ async def notify_discord(
     node: Optional[str] = None,
     buttons: bool = False,
 ):
-    """向配置的通知频道发送消息（自动路由到 Discord / 飞书 / 其他平台）。
+    """向配置的通知频道发送消息。
 
-    路由规则:
-      - oc_xxx / ou_xxx → 飞书（通过 openclaw message send --channel feishu）
-      - 纯数字 → Discord Bot API（直连）
-      - 其他 → openclaw CLI fallback
+    统一通过 `openclaw message send` CLI 发送，支持所有已接入平台。
+    函数名保留 notify_discord 以兼容现有调用方。
 
     Args:
         message: 消息内容
-        channel: 目标频道 ID（空则从配置/env 动态读取）
-        run_id: 关联的 Run ID（用于按钮回调）
+        channel: "platform:target" 格式（空则从配置/env 动态读取）
+        run_id: 关联的 Run ID
         node: 当前节点（用于 emoji）
-        buttons: 是否添加审核按钮
+        buttons: 是否添加审核按钮（预留）
     """
-    if not channel:
-        channel = _get_notify_channel()
-    if not channel:
+    raw = channel or _get_notify_channel()
+    if not raw:
         return False
 
-    platform = _detect_channel_platform(channel)
+    platform, target = _parse_channel_target(raw)
+    if not platform or not target:
+        logger.warning("Notify skipped: invalid channel config '%s'", raw)
+        return False
 
-    if platform == "feishu":
-        return await _notify_via_cli(message, channel, platform="feishu")
-    else:
-        return await _notify_discord_direct(message, channel)
+    return await _send_via_cli(message, platform, target)
 
 
-async def _notify_via_cli(message: str, channel: str, platform: str = "feishu") -> bool:
-    """通过 openclaw message send CLI 发送通知（支持任意平台）。"""
+async def _send_via_cli(message: str, platform: str, target: str) -> bool:
+    """通过 openclaw message send CLI 发送通知。"""
     import asyncio
     import subprocess as _sp
 
     cmd = [
         "openclaw", "message", "send",
         "--channel", platform,
-        "--target", channel,
+        "--target", target,
         "-m", message,
         "--json",
     ]
@@ -367,45 +347,14 @@ async def _notify_via_cli(message: str, channel: str, platform: str = "feishu") 
             lambda: _sp.run(cmd, capture_output=True, text=True, timeout=15),
         )
         if proc.returncode == 0:
-            logger.info("Notify via CLI (%s/%s): ok", platform, channel[:20])
+            logger.info("Notify (%s → %s): ok", platform, target[:20])
             return True
         else:
-            logger.warning("Notify via CLI failed: rc=%d stderr=%s", proc.returncode, proc.stderr[:200])
+            logger.warning("Notify failed (%s → %s): rc=%d stderr=%s",
+                           platform, target[:20], proc.returncode, proc.stderr[:200])
             return False
     except Exception as e:
-        logger.warning("Notify via CLI error: %s", e)
-        return False
-
-
-async def _notify_discord_direct(message: str, channel: str) -> bool:
-    """直接使用 Discord Bot API 发送通知。"""
-    bot_token = _get_discord_bot_token()
-    if not bot_token:
-        # fallback 到 CLI
-        return await _notify_via_cli(message, channel, platform="discord")
-
-    proxy = _get_discord_proxy()
-    try:
-        client_kwargs: Dict[str, Any] = {"timeout": 10}
-        if proxy:
-            client_kwargs["proxy"] = proxy
-
-        async with httpx.AsyncClient(**client_kwargs) as client:
-            resp = await client.post(
-                f"https://discord.com/api/v10/channels/{channel}/messages",
-                json={"content": message},
-                headers={
-                    "Authorization": f"Bot {bot_token}",
-                    "Content-Type": "application/json",
-                },
-            )
-            if resp.status_code in (200, 201):
-                return True
-            else:
-                logger.warning("Discord API error: %s %s", resp.status_code, resp.text[:200])
-                return False
-    except Exception as e:
-        logger.warning("Discord notify failed: %s", e)
+        logger.warning("Notify error (%s → %s): %s", platform, target[:20], e)
         return False
 
 
