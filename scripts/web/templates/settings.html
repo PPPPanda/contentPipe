@@ -365,7 +365,20 @@ async function restartService() {
     }, 2000);
 }
 
-// 页面加载时自动刷新模型列表
-document.addEventListener('DOMContentLoaded', function() { loadModelsForSettings(); });
+// 页面加载时：仅在未配置时自动执行发现
+document.addEventListener('DOMContentLoaded', function() {
+    // 模型：检查是否已有 LLM 配置
+    var hasModel = document.querySelector('select[name="default_llm"]');
+    var currentModel = hasModel ? hasModel.value : '';
+    if (!currentModel) {
+        loadModelsForSettings();
+    }
+
+    // 通知频道：未配置时自动发现
+    var notifyInput = document.getElementById('settings-notify-channel');
+    if (notifyInput && !notifyInput.value.trim()) {
+        loadChannelsForSettings();
+    }
+});
 </script>
 {% endblock %}
