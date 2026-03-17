@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 import yaml
 
+from cli_utils import parse_cli_json
 from gateway_auth import build_gateway_headers
 from logutil import get_logger
 
@@ -405,7 +406,7 @@ def _search_platform(platform: str, query: str) -> list[dict]:
                 if "Not authenticated" in r.stdout or "Not authenticated" in r.stderr:
                     logger.warning("Twitter 未认证，跳过")
                     return []
-                data = json.loads(r.stdout)
+                data = parse_cli_json(r.stdout)
                 items = data if isinstance(data, list) else data.get("tweets", data.get("results", []))
                 return [
                     {
@@ -432,7 +433,7 @@ def _search_platform(platform: str, query: str) -> list[dict]:
                 capture_output=True, text=True, timeout=180, cwd=_WORKSPACE_ROOT,
             )
             if r.returncode == 0 and r.stdout.strip():
-                data = json.loads(r.stdout)
+                data = parse_cli_json(r.stdout)
                 feeds = data.get("feeds", data.get("items", []))
                 if isinstance(feeds, list):
                     return [
@@ -480,7 +481,7 @@ def _search_platform(platform: str, query: str) -> list[dict]:
                 capture_output=True, text=True, timeout=180, cwd=_WORKSPACE_ROOT,
             )
             if r.returncode == 0 and r.stdout.strip():
-                data = json.loads(r.stdout)
+                data = parse_cli_json(r.stdout)
                 items = data if isinstance(data, list) else data.get("videos", [])
                 return [
                     {
@@ -532,7 +533,7 @@ def _search_platform(platform: str, query: str) -> list[dict]:
                 capture_output=True, text=True, timeout=180,
             )
             if r.returncode == 0 and r.stdout.strip():
-                items = json.loads(r.stdout)
+                items = parse_cli_json(r.stdout)
                 return [
                     {
                         "title": repo.get("name", ""),

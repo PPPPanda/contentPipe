@@ -20,6 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
+from cli_utils import parse_cli_json
 from logutil import get_logger
 
 from web.run_manager import (
@@ -1540,7 +1541,7 @@ def _discover_model_keys_local() -> list[str]:
         )
         if result.returncode != 0:
             return []
-        raw = json.loads(result.stdout)
+        raw = parse_cli_json(result.stdout)
         raw_models = raw.get("models", raw) if isinstance(raw, dict) else raw
         if not isinstance(raw_models, list):
             return []
@@ -1591,7 +1592,7 @@ async def _run_setup_preflight(gateway_url: str) -> dict[str, Any]:
             env={**os.environ, "NO_COLOR": "1"},
         )
         if result.returncode == 0:
-            items = json.loads(result.stdout)
+            items = parse_cli_json(result.stdout)
             agent_exists = any(item.get("id") == agent_id for item in items)
         else:
             agents_error = (result.stderr or result.stdout or "openclaw config get agents.list failed")[:200]
@@ -1647,7 +1648,7 @@ async def _run_setup_preflight(gateway_url: str) -> dict[str, Any]:
             env={**os.environ, "NO_COLOR": "1"},
         )
         if result.returncode == 0:
-            loaded = json.loads(result.stdout)
+            loaded = parse_cli_json(result.stdout)
             if isinstance(loaded, list):
                 extra_dirs = [str(Path(p).resolve()) for p in loaded if p]
                 extra_dirs_ok = str(skills_dir) in extra_dirs
@@ -1777,8 +1778,7 @@ async def api_setup_discover(gateway_url: str = "http://localhost:18789"):
             env={**os.environ, "NO_COLOR": "1"},
         )
         if result.returncode == 0:
-            import json as _json
-            raw = _json.loads(result.stdout)
+            raw = parse_cli_json(result.stdout)
             raw_models = raw.get("models", raw) if isinstance(raw, dict) else raw
             if isinstance(raw_models, list):
                 for m in raw_models:

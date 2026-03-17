@@ -24,6 +24,7 @@ import subprocess
 import sys
 from typing import Any
 
+from cli_utils import parse_cli_json
 from logutil import get_logger
 
 logger = get_logger(__name__)
@@ -79,7 +80,7 @@ def fetch_twitter(top: int = 15, keywords: list[str] | None = None) -> list[dict
             if proc.returncode != 0:
                 continue
 
-            tweets = json.loads(proc.stdout) if proc.stdout.strip() else []
+            tweets = parse_cli_json(proc.stdout) if proc.stdout.strip() else []
             if isinstance(tweets, dict):
                 tweets = tweets.get("tweets", tweets.get("data", [tweets]))
             if not isinstance(tweets, list):
