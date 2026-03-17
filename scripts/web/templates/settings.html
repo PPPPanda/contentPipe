@@ -76,8 +76,9 @@
                 </select>
                 <button type="button" onclick="loadModelsForSettings()"
                         class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-xs text-white rounded transition"
-                        title="从 Gateway 刷新模型列表">
-                    🔄
+                        title="从 Gateway 刷新模型列表"
+                        id="btn-refresh-models">
+                    刷新模型
                 </button>
             </div>
 
@@ -114,8 +115,15 @@
                        id="settings-notify-channel">
                 <button type="button" onclick="loadChannelsForSettings()"
                         class="px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-xs text-white rounded transition"
-                        title="从 Gateway 发现可用频道">
-                    🔍
+                        title="从 Gateway 发现可用频道"
+                        id="btn-discover-channels">
+                    发现频道
+                </button>
+                <button type="button" onclick="testNotify()"
+                        class="px-3 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-xs text-white rounded transition"
+                        title="发送测试通知到当前配置的频道"
+                        id="btn-test-notify">
+                    测试发送
                 </button>
             </div>
             <div id="settings-channel-picker" class="ml-32 hidden">
@@ -124,6 +132,7 @@
                     <option value="">选择频道...</option>
                 </select>
             </div>
+            <div id="notify-test-result" class="ml-32 text-xs mt-1"></div>
             <p class="text-xs text-slate-500 ml-32">
                 Pipeline 事件（等待审核、完成、失败）会推送到此频道。
                 支持 Discord / 飞书 / KOOK / 企业微信等所有已接入平台。
@@ -334,6 +343,34 @@ function pickChannel(sel) {
     if (sel.value) {
         document.getElementById('settings-notify-channel').value = sel.value;
     }
+}
+
+async function testNotify() {
+    var channel = document.getElementById('settings-notify-channel').value.trim();
+    var btn = document.getElementById('btn-test-notify');
+    var result = document.getElementById('notify-test-result');
+    if (!channel) {
+        result.innerHTML = '<span class="text-amber-400">⚠️ 请先配置频道</span>';
+        return;
+    }
+    btn.disabled = true; btn.textContent = '发送中...';
+    result.innerHTML = '<span class="text-slate-400">⏳ 正在发送测试通知...</span>';
+    try {
+        var resp = await fetch('/api/config/notify/test', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({notify_channel: channel})
+        });
+        var data = await resp.json();
+        if (data.ok) {
+            result.innerHTML = '<span class="text-green-400">✅ 发送成功！请检查目标频道</span>';
+        } else {
+            result.innerHTML = '<span class="text-red-400">❌ 发送失败: ' + (data.error || '未知错误') + '</span>';
+        }
+    } catch(e) {
+        result.innerHTML = '<span class="text-red-400">❌ 请求失败: ' + e.message + '</span>';
+    }
+    btn.disabled = false; btn.textContent = '测试发送';
 }
 
 async function restartService() {

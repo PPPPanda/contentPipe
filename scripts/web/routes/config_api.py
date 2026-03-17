@@ -230,6 +230,37 @@ async def api_set_notify(request: Request):
     return {"ok": True, "updated": updated}
 
 
+@router.post("/config/notify/test")
+async def api_test_notify(request: Request):
+    """发送测试通知到指定频道
+
+    ```json
+    {"notify_channel": "feishu:oc_xxx"}
+    ```
+    """
+    body = await request.json()
+    channel = str(body.get("notify_channel", "")).strip()
+    if not channel:
+        return {"ok": False, "error": "未指定频道"}
+
+    try:
+        from web.notify import notify_discord
+        import datetime
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ok = await notify_discord(
+            f"🧪 **ContentPipe 通知测试**\n"
+            f"频道配置验证成功！\n"
+            f"时间: {now}",
+            channel=channel,
+        )
+        if ok:
+            return {"ok": True}
+        else:
+            return {"ok": False, "error": "发送失败，请检查频道配置和 Gateway 连接"}
+    except Exception as e:
+        return {"ok": False, "error": str(e)[:200]}
+
+
 # ── 图片引擎 ──────────────────────────────────────────────────
 
 @router.get("/config/image-engine")
