@@ -298,6 +298,21 @@ def _get_discord_proxy() -> str:
     return ""
 
 
+def _detect_channel_platform(channel_id: str) -> str:
+    """根据频道 ID 格式自动检测平台。
+
+    飞书群聊: oc_xxx
+    飞书用户: ou_xxx
+    Discord: 纯数字
+    KOOK: 纯数字（但通常由配置指定 channel=kook）
+    """
+    if channel_id.startswith("oc_") or channel_id.startswith("ou_"):
+        return "feishu"
+    if channel_id.isdigit():
+        return "discord"
+    return "discord"  # fallback
+
+
 async def notify_discord(
     message: str,
     *,
@@ -306,7 +321,12 @@ async def notify_discord(
     node: Optional[str] = None,
     buttons: bool = False,
 ):
-    """向 Discord 频道发送通知（直接使用 Discord Bot API）。
+    """向配置的通知频道发送消息（自动路由到 Discord / 飞书 / 其他平台）。
+
+    路由规则:
+      - oc_xxx / ou_xxx → 飞书（通过 openclaw message send --channel feishu）
+      - 纯数字 → Discord Bot API（直连）
+      - 其他 → openclaw CLI fallback
 
     Args:
         message: 消息内容
@@ -320,10 +340,49 @@ async def notify_discord(
     if not channel:
         return False
 
+    platform = _detect_channel_platform(channel)
+
+    if platform == "feishu":
+        return await _notify_via_cli(message, channel, platform="feishu")
+    else:
+        return await _notify_discord_direct(message, channel)
+
+
+async def _notify_via_cli(message: str, channel: str, platform: str = "feishu") -> bool:
+    """通过 openclaw message send CLI 发送通知（支持任意平台）。"""
+    import asyncio
+    import subprocess as _sp
+
+    cmd = [
+        "openclaw", "message", "send",
+        "--channel", platform,
+        "--target", channel,
+        "-m", message,
+        "--json",
+    ]
+
+    try:
+        proc = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: _sp.run(cmd, capture_output=True, text=True, timeout=15),
+        )
+        if proc.returncode == 0:
+            logger.info("Notify via CLI (%s/%s): ok", platform, channel[:20])
+            return True
+        else:
+            logger.warning("Notify via CLI failed: rc=%d stderr=%s", proc.returncode, proc.stderr[:200])
+            return False
+    except Exception as e:
+        logger.warning("Notify via CLI error: %s", e)
+        return False
+
+
+async def _notify_discord_direct(message: str, channel: str) -> bool:
+    """直接使用 Discord Bot API 发送通知。"""
     bot_token = _get_discord_bot_token()
     if not bot_token:
-        logger.warning("Discord notify skipped: no bot token")
-        return False
+        # fallback 到 CLI
+        return await _notify_via_cli(message, channel, platform="discord")
 
     proxy = _get_discord_proxy()
     try:
