@@ -12,6 +12,7 @@ ContentPipe Formatter — Markdown → 微信/小红书兼容 HTML
 from __future__ import annotations
 
 import argparse
+import html as html_mod
 import json
 import os
 import re
@@ -68,7 +69,6 @@ def markdown_to_wechat_html(md_text: str, platform: str = "wechat", template_nam
             else:
                 # 退出代码块 → 生成 HTML
                 # 微信编辑器会吞掉 <pre> 内的 \n，必须用 <br> 强制换行
-                import html as html_mod
                 escaped_lines = []
                 for cl in code_block_lines:
                     # 转义 HTML 特殊字符，空格转 &nbsp; 保留缩进
@@ -164,7 +164,20 @@ def markdown_to_wechat_html(md_text: str, platform: str = "wechat", template_nam
         # 普通段落
         html_parts.append(f'<p {styles["p"]}>{_inline_format(stripped, styles)}</p>')
 
-    # in_list 不再需要关闭标签（已改用 <p> 模拟列表）
+    # 容错：未关闭的代码块
+    if in_code_block and code_block_lines:
+        escaped_lines = []
+        for cl in code_block_lines:
+            esc = html_mod.escape(cl)
+            esc = esc.replace("  ", " &nbsp;")
+            escaped_lines.append(esc)
+        escaped = "<br>".join(escaped_lines)
+        html_parts.append(
+            '<section style="background:#f6f8fa;border-radius:8px;padding:14px 16px;'
+            'margin:12px 0;overflow-x:auto;border:1px solid #e1e4e8;">'
+            f'<p style="margin:0;font-family:Menlo,Consolas,\'Courier New\',monospace;'
+            f'font-size:13px;line-height:1.6;color:#24292e;">{escaped}</p></section>'
+        )
     if in_blockquote:
         html_parts.append("</section>")
 
@@ -249,7 +262,7 @@ def insert_images(content_html: str, placements: list, image_map: dict, platform
     raw_lines = content_html.split("\n")
     blocks: list[str] = []
     current: list[str] = []
-    close_tags = ("</p>", "</h2>", "</h3>", "</ul>", "</ol>", "</section>", "</blockquote>")
+    close_tags = ("</p>", "</h2>", "</h3>", "</section>", "</blockquote>")
 
     for line in raw_lines:
         current.append(line)
