@@ -90,9 +90,9 @@ class LLMBrowserEngine(ImageEngine):
             if result is None:
                 raise RuntimeError("LLM session spawn failed or timed out")
 
-            # 检查结果
+            # 等待文件落盘（agent 的 browser/exec 操作可能异步完成）
             elapsed = int((time.time() - start) * 1000)
-            check = self._check_result(output_path, width, height)
+            check = self._wait_for_file(output_path, width, height, max_wait=120)
 
             if check["ok"]:
                 logger.info("llm_browser[%s]: success, file=%s size=%d",
@@ -241,6 +241,41 @@ Image size: {ratio_hint}, {width}x{height} pixels
                            self.timeout + 60, session_id)
             # 超时但图片可能已经下载了
             return {"status": "timeout", "session_id": session_id}
+
+    def _wait_for_file(self, output_path: Path, width: int, height: int, max_wait: int = 120) -> dict:
+        """等待文件出现并通过检查。
+
+        Agent turn 返回后，浏览器/exec 操作可能仍在异步执行（DALL-E 生成 + curl 下载）。
+        轮询等待文件出现，最多等 max_wait 秒。
+        """
+        import time as _time
+
+        # 先立即检查一次
+        check = self._check_result(output_path, width, height)
+        if check["ok"]:
+            return check
+
+        logger.info("llm_browser: file not ready yet, polling up to %ds for %s", max_wait, output_path.name)
+        poll_interval = 5  # 每 5 秒检查一次
+        waited = 0
+        while waited < max_wait:
+            _time.sleep(poll_interval)
+            waited += poll_interval
+            check = self._check_result(output_path, width, height)
+            if check["ok"]:
+                logger.info("llm_browser: file appeared after %ds polling for %s", waited, output_path.name)
+                return check
+            # 如果文件存在但太小，可能还在下载中
+            if output_path.exists():
+                size = output_path.stat().st_size
+                if size > 0:
+                    logger.info("llm_browser: file exists but %d bytes (waiting for complete download)", size)
+
+        # 最终检查
+        final = self._check_result(output_path, width, height)
+        if not final["ok"]:
+            logger.warning("llm_browser: file still not ready after %ds for %s: %s", max_wait, output_path.name, final.get("reason"))
+        return final
 
     def _check_result(self, output_path: Path, width: int, height: int) -> dict:
         """检查生成结果
