@@ -179,43 +179,68 @@ Image size: {ratio_hint}, {width}x{height} pixels
 - 完成后输出：DONE"""
 
     def _spawn_session(self, task: str) -> dict | None:
-        """通过 openclaw CLI 启动 LLM session"""
+        """通过 openclaw agent CLI 启动 LLM agent turn。
+
+        使用 `openclaw agent` 命令，指定 agent id 和消息。
+        Agent 拥有完整的 tool use 能力（browser、exec 等），
+        会根据 chatgpt-browser skill 自主操控浏览器。
+
+        每次调用创建独立 session（通过唯一 session-id）。
+        """
+        session_id = f"contentpipe-img-{int(time.time())}"
         cmd = [
-            "openclaw", "session", "spawn",
+            "openclaw", "agent",
             "--agent", self.agent_id,
-            "--mode", "run",
+            "--session-id", session_id,
+            "--message", task,
             "--timeout", str(self.timeout),
-            "--task", task,
+            "--json",
         ]
 
-        logger.info("llm_browser: running session spawn (timeout=%ds)", self.timeout)
+        logger.info("llm_browser: running agent turn (session=%s, timeout=%ds)",
+                     session_id, self.timeout)
 
         try:
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout + 30,  # CLI 超时比 session 超时多 30s
+                timeout=self.timeout + 60,  # CLI 超时比 agent 超时多 60s
                 cwd=str(Path.home()),
             )
 
+            stdout = result.stdout.strip() if result.stdout else ""
+            stderr = result.stderr.strip() if result.stderr else ""
+
+            # 过滤 CLI 噪音（[plugins]、🦞 等行）
+            stdout_lines = [
+                line for line in stdout.split("\n")
+                if not any(line.startswith(p) for p in [
+                    "[plugins]", "[gateway]", "[agent]", "[session]",
+                    "[channel", "🦞", "WARN ", "  WARN", "  Fix:",
+                ])
+            ]
+            clean_stdout = "\n".join(stdout_lines).strip()
+
             if result.returncode == 0:
-                logger.info("llm_browser: session completed successfully")
-                # 尝试解析输出
+                logger.info("llm_browser: agent turn completed (session=%s)", session_id)
                 try:
-                    return json.loads(result.stdout.strip())
+                    return json.loads(clean_stdout)
                 except (json.JSONDecodeError, ValueError):
-                    return {"status": "completed", "stdout": result.stdout[:500]}
+                    return {"status": "completed", "session_id": session_id,
+                            "stdout": clean_stdout[:500]}
             else:
-                logger.warning("llm_browser: session failed (rc=%d): %s",
-                               result.returncode, result.stderr[:300])
+                logger.warning("llm_browser: agent turn failed (rc=%d, session=%s): %s",
+                               result.returncode, session_id, stderr[:300])
                 # 即使 CLI 返回非零，图片可能已下载成功
-                return {"status": "error", "stderr": result.stderr[:300]}
+                return {"status": "error", "session_id": session_id,
+                        "stderr": stderr[:300]}
 
         except subprocess.TimeoutExpired:
-            logger.warning("llm_browser: session timed out after %ds", self.timeout + 30)
+            logger.warning("llm_browser: agent turn timed out after %ds (session=%s)",
+                           self.timeout + 60, session_id)
             # 超时但图片可能已经下载了
-            return {"status": "timeout"}
+            return {"status": "timeout", "session_id": session_id}
 
     def _check_result(self, output_path: Path, width: int, height: int) -> dict:
         """检查生成结果

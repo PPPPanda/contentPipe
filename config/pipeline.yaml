@@ -20,7 +20,7 @@ pipeline:
   # 各角色模型覆盖（留空 = 使用 default_llm）
   # 首次运行向导或设置页面会帮你配置
   llm_overrides: {}
-  image_engine: auto
+  image_engine: llm-browser:chatgpt
 
 # Scout 配置
 scout:
