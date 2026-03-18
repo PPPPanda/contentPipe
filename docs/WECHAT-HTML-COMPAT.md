@@ -52,29 +52,38 @@
 
 ### 2. 代码块（` ``` `）不渲染
 
-**现象**：markdown 代码块（` ``` ... ``` `）被当成普通段落逐行渲染，
-反引号变成孤立的 `<code>` 标签，代码缩进和换行丢失。
+**现象**：代码块内容换行丢失，多行代码挤成一行。
 
-**根因**：`markdown_to_wechat_html()` 逐行处理，没有多行代码块的状态机。
+**根因**：
+1. 初版：`markdown_to_wechat_html()` 没有代码块状态机
+2. 二版：用 `<pre>` + `\n` 换行，但微信编辑器会**吞掉 `<pre>` 内的 `\n`**，
+   替换成空格/`&nbsp;`，`white-space: pre-wrap` 不生效
 
 **修复方案**（`formatter.py`）：
 - 新增 `in_code_block` 状态机
 - 检测到 ` ``` ` 开始行 → 收集后续行
-- 检测到 ` ``` ` 结束行 → 用 `<section><pre>` 渲染
+- 检测到 ` ``` ` 结束行 → 用 `<section><p>` 渲染（**不用 `<pre>`**）
+- **换行用 `<br>` 替代 `\n`**（微信不会吞 `<br>`）
+- **缩进空格用 `&nbsp;` 保留**
 - 代码内容用 `html.escape()` 转义
-- 样式：浅灰背景（`#f6f8fa`）、等宽字体、圆角边框、`white-space:pre-wrap`
+- 样式：浅灰背景（`#f6f8fa`）、monospace 字体、圆角边框
 
 **示例**：
 ```html
 <section style="background:#f6f8fa;border-radius:8px;padding:14px 16px;
   margin:12px 0;overflow-x:auto;border:1px solid #e1e4e8;">
-  <pre style="margin:0;font-family:Menlo,Consolas,'Courier New',monospace;
-    font-size:13px;line-height:1.6;color:#24292e;white-space:pre-wrap;
-    word-wrap:break-word;">代码内容</pre>
+  <p style="margin:0;font-family:Menlo,Consolas,'Courier New',monospace;
+    font-size:13px;line-height:1.6;color:#24292e;">
+    第一行代码<br>
+    &nbsp;&nbsp;缩进的第二行<br>
+    第三行代码</p>
 </section>
 ```
 
-**Commit**: `9f2d2cf`
+**⚠️ 关键教训**：微信编辑器里 `<pre>` 的 `white-space` 属性**完全不生效**，
+必须用 `<br>` 显式换行 + `&nbsp;` 显式缩进。
+
+**Commit**: `9f2d2cf`, `b97c335`
 
 ---
 
@@ -108,7 +117,7 @@
 | `<h2>/<h3>` | 标题 | 正常使用 |
 | `<img>` | 图片 | 必须内联 style |
 | `<a>` | 链接 | 微信会过滤部分属性 |
-| `<pre>` | 代码块 | 需要包在 `<section>` 内 |
+| `<pre>` | 代码块 | ⚠️ 微信会吞掉 `\n`，建议用 `<p>` + `<br>` 替代 |
 | `<code>` | 行内代码 | 正常使用 |
 | `<br>` | 换行 | 正常使用 |
 
