@@ -326,28 +326,69 @@
             </div>
         </div>
 
-        {# 生成的图片缩略图 #}
-        {% if run.generated_images is defined %}
+        {# 封面 + 配图（带替换功能） #}
         <div class="card p-4">
-            <h3 class="text-xs text-slate-500 uppercase mb-2">🖼️ 已生成配图</h3>
+            <h3 class="text-xs text-slate-500 uppercase mb-2">🖼️ 封面与配图</h3>
+
+            {# 封面 #}
+            {% set cover_info = run.visual_plan.cover | default({}) if run.visual_plan is defined and run.visual_plan is mapping else {} %}
+            {% set cover_path = run.generated_cover.file_path if run.generated_cover is defined and run.generated_cover and run.generated_cover.file_path is defined else '' %}
+            {% set cover_name = cover_path.split('/')[-1] if cover_path else 'cover.jpg' %}
+            <div class="bg-slate-800/50 rounded p-3 mb-3" data-pid="cover">
+                <div class="flex gap-3">
+                    <div class="w-48 h-24 bg-slate-700/50 rounded overflow-hidden flex-shrink-0 relative group">
+                        <img src="/api/runs/{{ run.run_id }}/images/{{ cover_name }}"
+                             alt="cover" class="w-full h-full object-cover"
+                             onerror="this.parentElement.innerHTML='<span class=\'text-slate-500 text-xs p-2\'>🪪 封面未生成</span>'">
+                        <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <button onclick="replaceCover()" class="text-xs text-white bg-sky-500/80 hover:bg-sky-500 px-2 py-1 rounded">🔄 替换</button>
+                        </div>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <p class="text-xs font-medium text-amber-300/90 mb-1">🪪 封面 · {{ cover_info.aspect_ratio | default('2.35:1') }}</p>
+                        {% if cover_info.title %}<p class="text-xs text-green-400/80 mb-0.5">{{ cover_info.title }}</p>{% endif %}
+                        <p class="text-xs text-slate-400 line-clamp-2">{{ cover_info.description | default('') | truncate(120) }}</p>
+                        {% if run.generated_cover is defined and run.generated_cover and run.generated_cover.success %}
+                        <p class="text-xs text-emerald-500/70 mt-1">✅ {{ run.generated_cover.engine | default('') }}</p>
+                        {% elif run.generated_cover is defined and run.generated_cover and run.generated_cover.error %}
+                        <p class="text-xs text-red-400/70 mt-1">❌ {{ run.generated_cover.error | truncate(60) }}</p>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+
+            {# 配图 #}
+            {% if run.generated_images is defined %}
             <div class="grid grid-cols-2 gap-2">
                 {% for img in run.generated_images | default([]) %}
                     {% if img.success | default(false) %}
                     {% set img_name = img.file_path.split('/')[-1] if img.file_path else img.placement_id %}
-                    <div class="bg-slate-800/50 rounded overflow-hidden">
+                    {% set placement = {} %}
+                    {% if run.visual_plan is defined and run.visual_plan is mapping %}
+                        {% for p in run.visual_plan.placements | default([]) %}
+                            {% if p.id == img.placement_id %}{% set placement = p %}{% endif %}
+                        {% endfor %}
+                    {% endif %}
+                    <div class="bg-slate-800/50 rounded overflow-hidden relative group">
                         <img src="/api/runs/{{ run.run_id }}/images/{{ img_name }}"
                              alt="{{ img.placement_id }}"
                              class="w-full h-auto"
                              onerror="this.style.display='none'">
-                        <div class="px-2 py-1 text-xs text-slate-400">
-                            {{ img.placement_id }} · {{ img.engine | default('?') }}
+                        <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                            <button onclick="replacePlacement('{{ img.placement_id }}')" class="text-xs text-white bg-sky-500/80 hover:bg-sky-500 px-2 py-1 rounded">🔄 替换</button>
+                        </div>
+                        <div class="px-2 py-1">
+                            <p class="text-xs text-slate-400">{{ img.placement_id }} · {{ img.engine | default('?') }}</p>
+                            {% if placement.after_section is defined %}
+                            <p class="text-xs text-green-400/60">📍 {{ placement.after_section | replace('## ', '') }}</p>
+                            {% endif %}
                         </div>
                     </div>
                     {% endif %}
                 {% endfor %}
             </div>
+            {% endif %}
         </div>
-        {% endif %}
         {% endif %}
 
     </div>
