@@ -30,7 +30,7 @@ from .base import ImageEngine, ImageResult
 logger = logging.getLogger(__name__)
 
 # LLM session 超时（秒）
-DEFAULT_TIMEOUT = 300  # 5 分钟，留够生成+下载时间
+DEFAULT_TIMEOUT = 480  # 8 分钟，留够生成+下载时间
 MAX_RETRIES = 2
 
 

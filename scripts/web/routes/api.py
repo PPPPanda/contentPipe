@@ -595,11 +595,25 @@ async def api_auto_skip(request: Request, run_id: str):
     return {"ok": True, "node_id": node_id, "skip": skip}
 
 
+_review_locks: dict[str, float] = {}  # run_id → timestamp of last approve
+
 @router.post("/runs/{run_id}/review")
 async def api_submit_review(request: Request, run_id: str, background_tasks: BackgroundTasks):
-    """提交审核结果"""
+    """提交审核结果（幂等：10 秒内重复 approve 返回 302 不重跑 pipeline）"""
+    import time as _time
     form = await request.form()
     action = form.get("action", "approve")
+
+    # 防重复提交：同一 run 10 秒内的第二次 approve 直接跳过
+    if action in ("approve", "select"):
+        now = _time.time()
+        last = _review_locks.get(run_id, 0)
+        if now - last < 10:
+            logger.warning("Duplicate approve for %s (%.1fs ago), skipping", run_id, now - last)
+            return HTMLResponse(
+                f'<meta http-equiv="refresh" content="0;url=/runs/{run_id}">',
+            )
+        _review_locks[run_id] = now
 
     raw = _load_raw_state(run_id)
     if not raw:
