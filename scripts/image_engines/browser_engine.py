@@ -368,7 +368,9 @@ class BrowserEngine(ImageEngine):
         """尝试激活 Chrome Relay（运行 connect.sh 脚本）"""
         try:
             import subprocess as _sp
-            script_path = Path(__file__).parent.parent.parent / "skills" / "browser-relay-activator" / "scripts" / "connect.sh"
+            # 主 workspace skills 目录（plugin 内不再保留副本）
+            workspace_skills = Path(__file__).parent.parent.parent.parent.parent / "skills"
+            script_path = workspace_skills / "browser-relay-activator" / "scripts" / "connect.sh"
             if not script_path.exists():
                 logger.warning("browser_engine: relay activator script not found: %s", script_path)
                 return False

@@ -1,5 +1,5 @@
 ---
-name: "multi-search-engine"
+name: "contentpipe-multi-search"
 description: "Multi search engine integration with 17 engines (8 CN + 9 Global). Supports advanced search operators, time filters, site search, privacy engines, and WolframAlpha knowledge queries. No API keys required."
 ---
 

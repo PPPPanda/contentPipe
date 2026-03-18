@@ -1,5 +1,5 @@
 ---
-name: baidu-web-search
+name: contentpipe-baidu-search
 description: Use Baidu Qianfan web search API for real-time web retrieval. Use when the user needs to search the web, get latest news, verify facts, or expresses intent like "查一下","搜一下","最近","今天","今年", or asks about events/people/products that require looking up.
 metadata:
   author: liuhean
