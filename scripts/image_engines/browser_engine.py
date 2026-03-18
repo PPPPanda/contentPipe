@@ -537,12 +537,18 @@ class BrowserEngine(ImageEngine):
 
     def _reconnect_relay(self):
         """
-        发送后 URL 变化导致 relay 断连时尝试重连
+        执行过程中 relay 断连时尝试重连。
+
+        触发场景：
+        - 发送后 ChatGPT URL 从 / 变为 /c/xxx，relay targetId 失效
+        - Chrome 扩展意外断开
+        - 长时间等待后连接超时
 
         策略：
-        1. 先尝试直接操作（可能没断）
-        2. 如果 tab not found，重新获取 tabs 找到新 targetId
-        3. 如果还不行，尝试运行 relay 激活脚本
+        1. 先测试当前连接（可能没断）
+        2. 重新获取 tabs，找到新 targetId
+        3. tabs 为空 → 调 _activate_relay() 运行 connect.sh 重连
+        4. 重连后导航回目标页面
         """
         # 先测试当前连接
         try:
@@ -555,51 +561,47 @@ class BrowserEngine(ImageEngine):
 
         logger.info("browser_engine: relay disconnected, attempting reconnect...")
 
-        # 重新获取 tabs
-        tabs = self._get_tabs()
         config = self.site_config
         domain = re.sub(r'https?://', '', config.url).split('/')[0]
 
-        for tab in tabs:
-            tab_url = tab.get("url", "")
-            if domain in tab_url:
-                old_id = self._target_id
-                self._target_id = tab["targetId"]
-                logger.info(
-                    "browser_engine: found tab %s -> %s (url: %s)",
-                    old_id, self._target_id, tab_url
-                )
-                # 测试新 targetId
-                try:
-                    result = self._browser_evaluate("document.title")
-                    if result:
-                        logger.info("browser_engine: reconnected successfully")
-                        return
-                except Exception:
-                    pass
+        # 重新获取 tabs（relay 可能还在，只是 targetId 变了）
+        tabs = self._get_tabs()
 
-        # 尝试运行 relay 激活脚本
-        try:
-            import subprocess
-            script_path = Path(__file__).parent.parent.parent / "skills" / "browser-relay-activator" / "scripts" / "connect.sh"
-            if script_path.exists():
-                logger.info("browser_engine: running relay activator script...")
-                result = subprocess.run(
-                    ["bash", str(script_path)],
-                    capture_output=True, timeout=45,
-                    cwd=str(script_path.parent.parent),
-                )
-                if result.returncode == 0:
-                    time.sleep(3)
-                    # 重新获取 tabs
-                    tabs = self._get_tabs()
-                    for tab in tabs:
-                        if domain in tab.get("url", ""):
-                            self._target_id = tab["targetId"]
-                            logger.info("browser_engine: reconnected via script, target=%s", self._target_id)
+        if tabs:
+            for tab in tabs:
+                tab_url = tab.get("url", "")
+                if domain in tab_url:
+                    old_id = self._target_id
+                    self._target_id = tab["targetId"]
+                    logger.info("browser_engine: found tab %s -> %s (url: %s)",
+                                old_id, self._target_id, tab_url)
+                    try:
+                        result = self._browser_evaluate("document.title")
+                        if result:
+                            logger.info("browser_engine: reconnected successfully")
                             return
-        except Exception as e:
-            logger.warning("browser_engine: relay script failed: %s", e)
+                    except Exception:
+                        pass
+
+        # tabs 为空或没找到匹配 → relay 完全断了，重新激活
+        if not tabs or not any(domain in t.get("url", "") for t in tabs):
+            logger.info("browser_engine: relay fully disconnected, activating relay...")
+            activated = self._activate_relay()
+            if activated:
+                tabs = self._get_tabs()
+                # 激活后找匹配的 tab
+                for tab in tabs:
+                    if domain in tab.get("url", ""):
+                        self._target_id = tab["targetId"]
+                        logger.info("browser_engine: reconnected via relay activation, target=%s", self._target_id)
+                        return
+                # 有 tab 但没匹配 → 导航到目标页面
+                if tabs:
+                    self._target_id = tabs[0]["targetId"]
+                    logger.info("browser_engine: navigating to %s after relay activation", config.url)
+                    self._browser_action("navigate", url=config.url)
+                    time.sleep(3)
+                    return
 
         logger.warning("browser_engine: reconnect failed, continuing with best effort")
 
