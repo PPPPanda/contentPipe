@@ -67,15 +67,20 @@ def markdown_to_wechat_html(md_text: str, platform: str = "wechat", template_nam
                     in_blockquote = False
             else:
                 # 退出代码块 → 生成 HTML
-                code_text = "\n".join(code_block_lines)
+                # 微信编辑器会吞掉 <pre> 内的 \n，必须用 <br> 强制换行
                 import html as html_mod
-                escaped = html_mod.escape(code_text)
+                escaped_lines = []
+                for cl in code_block_lines:
+                    # 转义 HTML 特殊字符，空格转 &nbsp; 保留缩进
+                    esc = html_mod.escape(cl)
+                    esc = esc.replace("  ", " &nbsp;")  # 每两个空格保留一个 nbsp
+                    escaped_lines.append(esc)
+                escaped = "<br>".join(escaped_lines)
                 html_parts.append(
                     '<section style="background:#f6f8fa;border-radius:8px;padding:14px 16px;'
                     'margin:12px 0;overflow-x:auto;border:1px solid #e1e4e8;">'
-                    f'<pre style="margin:0;font-family:Menlo,Consolas,\'Courier New\',monospace;'
-                    f'font-size:13px;line-height:1.6;color:#24292e;white-space:pre-wrap;'
-                    f'word-wrap:break-word;">{escaped}</pre></section>'
+                    f'<p style="margin:0;font-family:Menlo,Consolas,\'Courier New\',monospace;'
+                    f'font-size:13px;line-height:1.6;color:#24292e;">{escaped}</p></section>'
                 )
                 in_code_block = False
                 code_block_lines = []
