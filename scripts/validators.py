@@ -131,11 +131,13 @@ def validate_topic_yaml(text: str) -> ValidationResult:
                 _ensure_mapping(t, f"topics[{i}]", details)
                 if isinstance(t, dict) and not str(t.get("title", "")).strip():
                     details.append(f"topics[{i}].title is required and must be non-empty")
-                # 每个话题应包含 writer_brief 和 handoff_to_researcher
-                if isinstance(t, dict) and not isinstance(t.get("writer_brief"), dict):
-                    details.append(f"topics[{i}].writer_brief is required")
-                if isinstance(t, dict) and not isinstance(t.get("handoff_to_researcher"), dict):
-                    details.append(f"topics[{i}].handoff_to_researcher is required")
+            # 第 1 个话题（推荐）必须有 writer_brief + handoff；其余可选
+            first = topics[0] if topics else {}
+            if isinstance(first, dict):
+                if not isinstance(first.get("writer_brief"), dict):
+                    details.append("topics[0].writer_brief is required (at least the top recommendation)")
+                if not isinstance(first.get("handoff_to_researcher"), dict):
+                    details.append("topics[0].handoff_to_researcher is required (at least the top recommendation)")
         # 检查搜索执行记录
         search_log = parsed.get("search_execution_log")
         if isinstance(search_log, dict):
