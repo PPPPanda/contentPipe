@@ -304,7 +304,15 @@ class BrowserEngine(ImageEngine):
     # ── 各步骤实现 ──────────────────────────────────────────
 
     def _ensure_tab(self, url: str):
-        """确保有可用的 tab 连接到目标网站"""
+        """确保有可用的 tab 连接到目标网站。
+
+        流程:
+        1. 查看现有 tabs，找匹配的
+        2. tabs 为空 → 说明 relay 未连接，尝试激活 relay
+        3. relay 激活后重新查找
+        4. 仍然没有 → 尝试 navigate 打开
+        5. 全部失败 → 抛异常
+        """
         tabs = self._get_tabs()
         domain = re.sub(r'https?://', '', url).split('/')[0]
 
@@ -315,11 +323,31 @@ class BrowserEngine(ImageEngine):
                 logger.info("browser_engine: reusing existing tab %s", self._target_id)
                 return
 
-        # 没有则打开新 tab
-        result = self._browser_action("open", url=url)
-        if result.get("ok") and result.get("targetId"):
-            self._target_id = result["targetId"]
-        else:
+        # tabs 为空 → relay 可能未连接，先尝试激活
+        if not tabs:
+            logger.info("browser_engine: no tabs found, attempting relay activation...")
+            self._activate_relay()
+            # 激活后重新获取
+            tabs = self._get_tabs()
+            for tab in tabs:
+                if domain in tab.get("url", ""):
+                    self._target_id = tab["targetId"]
+                    logger.info("browser_engine: found tab after relay activation: %s", self._target_id)
+                    return
+            # relay 激活了但没有目标页面，尝试导航
+            if tabs:
+                self._target_id = tabs[0]["targetId"]
+                logger.info("browser_engine: navigating existing tab %s to %s", self._target_id, url)
+                nav_result = self._browser_action("navigate", url=url)
+                if nav_result.get("ok"):
+                    return
+
+        # 有 tabs 但没有匹配的 → 尝试 navigate 打开新页面
+        if tabs:
+            result = self._browser_action("open", url=url)
+            if result.get("ok") and result.get("targetId"):
+                self._target_id = result["targetId"]
+                return
             # fallback: 重新获取 tabs
             time.sleep(3)
             tabs = self._get_tabs()
@@ -327,7 +355,35 @@ class BrowserEngine(ImageEngine):
                 if domain in tab.get("url", ""):
                     self._target_id = tab["targetId"]
                     return
-            raise RuntimeError(f"Failed to open tab for {url}")
+
+        raise RuntimeError(f"Failed to open tab for {url}")
+
+    def _activate_relay(self):
+        """尝试激活 Chrome Relay（运行 connect.sh 脚本）"""
+        try:
+            import subprocess as _sp
+            script_path = Path(__file__).parent.parent.parent / "skills" / "browser-relay-activator" / "scripts" / "connect.sh"
+            if not script_path.exists():
+                logger.warning("browser_engine: relay activator script not found: %s", script_path)
+                return False
+
+            logger.info("browser_engine: running relay activator: %s", script_path)
+            result = _sp.run(
+                ["bash", str(script_path)],
+                capture_output=True, text=True, timeout=60,
+                cwd=str(script_path.parent.parent),
+            )
+            if result.returncode == 0:
+                logger.info("browser_engine: relay activated successfully")
+                time.sleep(3)  # 等 relay 稳定
+                return True
+            else:
+                logger.warning("browser_engine: relay activation failed (rc=%d): %s",
+                               result.returncode, result.stderr[:200] if result.stderr else "")
+                return False
+        except Exception as e:
+            logger.warning("browser_engine: relay activation error: %s", e)
+            return False
 
     def _input_prompt(self, prompt: str):
         """输入提示词"""
