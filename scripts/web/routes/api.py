@@ -595,6 +595,36 @@ async def api_auto_skip(request: Request, run_id: str):
     return {"ok": True, "node_id": node_id, "skip": skip}
 
 
+# ── Scout 话题选择 ──────────────────────────────────────────
+
+@router.post("/runs/{run_id}/select-topic")
+async def api_select_topic(request: Request, run_id: str):
+    """用户在 Scout 审核阶段选择话题候选"""
+    data = await request.json()
+    topic_id = data.get("topic_id", "")
+    if not topic_id:
+        raise HTTPException(status_code=400, detail="topic_id is required")
+
+    raw = _load_raw_state(run_id)
+    if not raw:
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    scout_topics = raw.get("scout_topics", [])
+    chosen = next((t for t in scout_topics if t.get("topic_id") == topic_id), None)
+    if not chosen:
+        raise HTTPException(status_code=404, detail=f"Topic {topic_id} not found in scout_topics")
+
+    # 更新 state：选中的话题写入 topic / writer_brief / handoff
+    raw["selected_topic_id"] = topic_id
+    raw["topic"] = chosen
+    raw["writer_brief"] = chosen.get("writer_brief", {})
+    raw["handoff_to_researcher"] = chosen.get("handoff_to_researcher", {})
+    _save_state(raw)
+
+    logger.info("Topic selected: %s for run %s", topic_id, run_id)
+    return {"ok": True, "selected_topic_id": topic_id, "title": chosen.get("title", "")}
+
+
 _review_locks: dict[str, float] = {}  # run_id → timestamp of last approve
 
 @router.post("/runs/{run_id}/review")

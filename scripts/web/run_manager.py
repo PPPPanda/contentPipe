@@ -159,23 +159,43 @@ def get_node_output(run_id: str, node_id: str) -> dict:
         return {"error": "Run not found"}
 
     def _scout(s):
+        # v2: 多话题候选
+        scout_topics = s.get("scout_topics", [])
+        selected_topic_id = s.get("selected_topic_id", "")
         t = s.get("topic", {})
+
+        # 搜索执行记录
+        search_log = s.get("search_execution_log", {})
+        skills_called = search_log.get("skills_called", [])
+        search_summary = ""
+        if skills_called:
+            skill_names = [sc.get("skill", "?") for sc in skills_called]
+            total = search_log.get("total_sources_scanned", sum(sc.get("results_count", 0) for sc in skills_called))
+            search_summary = f"调用了 {len(skill_names)} 个搜索 skill，共扫描 {total} 条结果"
+
+        if scout_topics and len(scout_topics) > 1:
+            # v2 多话题模式
+            return {
+                "_type": "scout_topics",
+                "topics": scout_topics,
+                "selected_topic_id": selected_topic_id or (scout_topics[0].get("topic_id", "") if scout_topics else ""),
+                "search_summary": search_summary,
+                "skills_called": skills_called,
+            }
+
+        # v1 单话题 fallback
         wb = s.get("writer_brief", {})
         handoff = s.get("handoff_to_researcher", {})
 
-        # 方向来源（新 schema: direction_references / 旧 schema: sources）
         refs = t.get("direction_references", t.get("sources", []))
         ref_lines = [f"• {r.get('title', '?')}" for r in refs[:5]] if refs else []
 
-        # why_this_topic
         why = t.get("why_this_topic", [])
         why_text = "\n".join(f"• {w}" for w in why[:4]) if why else "—"
 
-        # must_cover from writer_brief
         must_cover = wb.get("must_cover", [])
         cover_text = "\n".join(f"• {m}" for m in must_cover[:5]) if must_cover else "—"
 
-        # verification targets count
         vt_count = len(handoff.get("verification_targets", []))
         rq_count = len(handoff.get("research_questions", []))
 
@@ -194,8 +214,9 @@ def get_node_output(run_id: str, node_id: str) -> dict:
             items.append({"label": "🔍 交给 Researcher", "value": f"{vt_count} 条待核查事实, {rq_count} 个调研问题"})
         if ref_lines:
             items.append({"label": "📊 方向参考", "value": "\n".join(ref_lines)})
+        if search_summary:
+            items.append({"label": "🔍 搜索覆盖", "value": search_summary})
 
-        # 兼容旧 schema 字段
         if t.get("heat_score"):
             items.append({"label": "🔥 热度", "value": f"{t['heat_score']}/100"})
         if t.get("keywords"):

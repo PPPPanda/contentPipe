@@ -65,7 +65,79 @@
         <!-- 节点输出卡片（摘要） -->
         <div class="card p-4" id="node-output-cards">
             <h3 class="text-xs text-slate-500 uppercase mb-3">{{ node_info.icon }} {{ node_info.label }} 输出</h3>
-            {% if node_output.get('_type') == 'cards' %}
+
+            {# ── Scout v2: 多话题候选卡片 ── #}
+            {% if node_output.get('_type') == 'scout_topics' %}
+                {% if node_output.get('search_summary') %}
+                <div class="mb-4 p-3 bg-slate-800/60 rounded-lg border border-slate-700/50">
+                    <div class="text-xs text-slate-500 mb-1">🔍 搜索覆盖</div>
+                    <div class="text-sm text-slate-300">{{ node_output.search_summary }}</div>
+                    {% if node_output.get('skills_called') %}
+                    <div class="flex flex-wrap gap-1 mt-2">
+                        {% for sc in node_output.skills_called %}
+                        <span class="text-xs bg-slate-700 text-slate-400 px-1.5 py-0.5 rounded">{{ sc.skill }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
+                </div>
+                {% endif %}
+
+                <div class="space-y-3" id="scout-topic-list">
+                    {% for topic in node_output.get('topics', []) %}
+                    {% set tid = topic.topic_id | default('T' ~ loop.index) %}
+                    {% set is_selected = (tid == node_output.get('selected_topic_id', '')) %}
+                    <div class="scout-topic-card rounded-lg p-4 cursor-pointer transition-all duration-200
+                                {{ 'border-2 border-green-500 bg-green-900/20' if is_selected else 'border border-slate-700 bg-slate-800/50 hover:border-sky-500/50 hover:bg-slate-800' }}"
+                         data-topic-id="{{ tid }}"
+                         onclick="selectScoutTopic('{{ tid }}')">
+                        <div class="flex items-start justify-between gap-2 mb-2">
+                            <div class="flex items-center gap-2">
+                                <span class="text-xs font-bold {{ 'text-green-400' if is_selected else 'text-sky-400' }} bg-slate-700 px-2 py-0.5 rounded">
+                                    {{ '#' ~ topic.rank | default(loop.index) }}
+                                </span>
+                                <span class="text-base font-medium text-slate-100">{{ topic.title | default('—') }}</span>
+                            </div>
+                            <div class="flex items-center gap-1 shrink-0">
+                                {% if is_selected %}
+                                <span class="text-xs text-green-400 font-medium bg-green-900/40 px-2 py-0.5 rounded">✅ 已选择</span>
+                                {% endif %}
+                                {% if topic.heat_score is defined %}
+                                <span class="text-xs {{ 'text-red-400' if topic.heat_score == '高' else ('text-amber-400' if topic.heat_score == '中' else 'text-slate-400') }} bg-slate-700 px-1.5 py-0.5 rounded">
+                                    🔥 {{ topic.heat_score }}
+                                </span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        {% if topic.summary is defined %}
+                        <p class="text-sm text-slate-400 mb-2">{{ topic.summary }}</p>
+                        {% endif %}
+                        <div class="text-xs text-slate-500 space-y-1">
+                            {% if topic.content_angle is defined %}
+                            <div>🎯 {{ topic.content_angle }}</div>
+                            {% endif %}
+                            {% if topic.proposed_thesis is defined %}
+                            <div>💡 {{ topic.proposed_thesis }}</div>
+                            {% endif %}
+                            {% if topic.heat_evidence is defined %}
+                            <div class="mt-1">
+                                {% for ev in topic.heat_evidence[:2] %}
+                                <div class="text-slate-500">📊 {{ ev }}</div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                            {% if topic.why_recommended is defined %}
+                            <div class="mt-1">
+                                {% for w in topic.why_recommended[:2] %}
+                                <div>✨ {{ w }}</div>
+                                {% endfor %}
+                            </div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+            {% elif node_output.get('_type') == 'cards' %}
                 <div class="space-y-3">
                     {% for item in node_output.get('items', []) %}
                     <div>
@@ -516,6 +588,56 @@ const chatBox = document.getElementById('chat-messages');
 const chatInput = document.getElementById('chat-input');
 const renderedMessageKeys = new Set();
 let syncInFlight = false;
+
+// ── Scout 话题选择 ──
+async function selectScoutTopic(topicId) {
+    try {
+        const res = await fetch(`/api/runs/${runId}/select-topic`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({topic_id: topicId}),
+        });
+        const data = await res.json();
+        if (!data.ok) { alert('选择失败: ' + (data.detail || '未知错误')); return; }
+
+        // 更新所有卡片样式
+        document.querySelectorAll('.scout-topic-card').forEach(card => {
+            const tid = card.dataset.topicId;
+            if (tid === topicId) {
+                card.className = card.className
+                    .replace(/border-slate-700|border-sky-500\/50/g, '')
+                    .replace(/bg-slate-800\/50|bg-slate-800/g, '')
+                    .replace('hover:border-sky-500/50', '')
+                    .replace('hover:bg-slate-800', '');
+                card.classList.add('border-2', 'border-green-500', 'bg-green-900/20');
+                // 添加已选择标签
+                let badge = card.querySelector('.topic-selected-badge');
+                if (!badge) {
+                    badge = document.createElement('span');
+                    badge.className = 'topic-selected-badge text-xs text-green-400 font-medium bg-green-900/40 px-2 py-0.5 rounded';
+                    badge.textContent = '✅ 已选择';
+                    const header = card.querySelector('.flex.items-center.gap-1.shrink-0');
+                    if (header) header.prepend(badge);
+                }
+                // rank 标签变绿
+                const rank = card.querySelector('.text-sky-400');
+                if (rank) { rank.classList.remove('text-sky-400'); rank.classList.add('text-green-400'); }
+            } else {
+                card.classList.remove('border-2', 'border-green-500', 'bg-green-900/20');
+                card.classList.add('border', 'border-slate-700', 'bg-slate-800/50');
+                // 移除已选择标签
+                const badge = card.querySelector('.topic-selected-badge');
+                if (badge) badge.remove();
+                // rank 标签恢复
+                const rank = card.querySelector('.text-green-400');
+                if (rank) { rank.classList.remove('text-green-400'); rank.classList.add('text-sky-400'); }
+            }
+        });
+    } catch (e) {
+        console.error('selectScoutTopic error:', e);
+        alert('网络错误');
+    }
+}
 
 function messageKey(role, content, attachments = []) {
     const attKey = (attachments || []).map(att => `${att.type || 'file'}:${att.filename || ''}:${att.path || ''}`).join('|');
