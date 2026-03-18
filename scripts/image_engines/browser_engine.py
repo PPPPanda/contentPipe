@@ -87,36 +87,40 @@ class BrowserSiteConfig:
 SITE_CONFIGS: dict[str, BrowserSiteConfig] = {
 
     # ⭐ ChatGPT — DALL-E 图片生成（参考 chatgpt-browser skill 实测）
+    # 使用 /images 专用页面（有风格模板、历史图片库、下载按钮）
     "chatgpt": BrowserSiteConfig(
         name="ChatGPT",
-        url="https://chatgpt.com/",
+        url="https://chatgpt.com/images",
 
         input_method="evaluate",
-        # {prompt} 是唯一占位符，其余 JS 大括号用 {{ }}
+        # /images 页面: #prompt-textarea 或 contenteditable 输入框
         prompt_evaluate_fn=(
-            "(function(){{ var el = document.querySelector('#prompt-textarea');"
+            "(function(){{ var el = document.querySelector('#prompt-textarea, [contenteditable=\"true\"]');"
+            " if(!el) return 'input not found';"
             " el.focus();"
             " document.execCommand('insertText', false, '{prompt}');"
             " return el.textContent }})()"
         ),
 
         send_method="evaluate",
-        # 纯 JS，无占位符，用单大括号
         send_evaluate_fn=(
             "(function(){ var btn = document.querySelector("
-            "'button[data-testid=\"send-button\"], button[aria-label=\"发送提示\"]');"
+            "'button[data-testid=\"send-button\"], button[aria-label=\"发送提示\"],"
+            " button[aria-label=\"Send\"]');"
             " if(btn){ btn.click(); return 'sent' } return 'not found' })()"
         ),
 
         result_method="download",
-        image_result_selector="article img",
-        # 纯 JS，无占位符，用单大括号
+        image_result_selector="img[src*='oaiusercontent'], img[src*='estuary'], article img",
+        # 提取生成图片的原图 URL（覆盖 /images 和对话页面多种 selector）
         image_download_evaluate_fn=(
             "(function(){ var imgs = document.querySelectorAll("
-            "'article img[src*=\"oaiusercontent\"], article img[src*=\"estuary\"]');"
+            "'img[src*=\"oaiusercontent\"], img[src*=\"estuary\"],"
+            " img[src*=\"dalle\"], img[src*=\"openai\"]');"
             " var urls = []; var seen = {};"
             " for(var i=0;i<imgs.length;i++){ var s=imgs[i].src;"
-            " if(!seen[s]){ seen[s]=true; urls.push(s) } }"
+            " if(s && !seen[s] && !s.startsWith('data:') && s.includes('http'))"
+            " { seen[s]=true; urls.push(s) } }"
             " return JSON.stringify(urls) })()"
         ),
         image_download_cookies=True,
@@ -124,12 +128,13 @@ SITE_CONFIGS: dict[str, BrowserSiteConfig] = {
         generation_timeout_ms=90000,
         load_wait_ms=3000,
         post_send_wait_ms=45000,       # ChatGPT 图片生成需要 30-60s
-        reconnect_on_navigate=True,     # 发送后 URL 变为 /c/xxx
+        reconnect_on_navigate=True,     # 发送后 URL 可能变为 /c/xxx
 
-        # 纯 JS，无占位符
+        # 完成检测: 停止按钮消失 = 生成完毕
         completion_check_fn=(
             "(function(){ return !document.querySelector("
-            "'[data-testid=\"stop-button\"], button[aria-label*=\"停止\"]') })()"
+            "'[data-testid=\"stop-button\"], button[aria-label*=\"停止\"],"
+            " button[aria-label*=\"Stop\"]') })()"
         ),
     ),
 
@@ -255,8 +260,9 @@ class BrowserEngine(ImageEngine):
             for action in config.pre_actions:
                 self._browser_action(**action)
 
-            # Step 3: 输入 prompt
-            self._input_prompt(prompt)
+            # Step 3: 输入 prompt（附加尺寸比例说明）
+            full_prompt = self._build_prompt_with_size(prompt, width, height)
+            self._input_prompt(full_prompt)
 
             # Step 4: 输入 negative prompt
             if negative_prompt and config.negative_prompt_selector:
@@ -384,6 +390,40 @@ class BrowserEngine(ImageEngine):
         except Exception as e:
             logger.warning("browser_engine: relay activation error: %s", e)
             return False
+
+    @staticmethod
+    def _build_prompt_with_size(prompt: str, width: int, height: int) -> str:
+        """在 prompt 末尾追加图片尺寸/比例说明。
+
+        ChatGPT/DALL-E 支持通过自然语言指定比例，如：
+        - "16:9 横版" / "9:16 竖版" / "1:1 方形"
+        - "宽 1200px 高 800px"
+        """
+        if width == height:
+            ratio_hint = "1:1 square aspect ratio"
+        elif width > height:
+            # 常见横版比例
+            r = width / height
+            if abs(r - 16 / 9) < 0.1:
+                ratio_hint = "16:9 landscape aspect ratio"
+            elif abs(r - 3 / 2) < 0.1:
+                ratio_hint = "3:2 landscape aspect ratio"
+            elif abs(r - 4 / 3) < 0.1:
+                ratio_hint = "4:3 landscape aspect ratio"
+            else:
+                ratio_hint = f"{width}x{height} landscape aspect ratio"
+        else:
+            r = height / width
+            if abs(r - 16 / 9) < 0.1:
+                ratio_hint = "9:16 portrait aspect ratio"
+            elif abs(r - 3 / 2) < 0.1:
+                ratio_hint = "2:3 portrait aspect ratio"
+            elif abs(r - 4 / 3) < 0.1:
+                ratio_hint = "3:4 portrait aspect ratio"
+            else:
+                ratio_hint = f"{width}x{height} portrait aspect ratio"
+
+        return f"{prompt}\n\nImage size: {ratio_hint}, {width}x{height} pixels"
 
     def _input_prompt(self, prompt: str):
         """输入提示词"""
