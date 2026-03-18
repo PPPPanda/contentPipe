@@ -413,6 +413,17 @@ def scout_node(state: ContentState) -> ContentState:
     scout_summary = parsed.get("scout_process_summary", {})
     search_log = parsed.get("search_execution_log", {})
 
+    # v2: 选中话题的关键词覆盖全局 user_requirements
+    if topics_list and isinstance(topics_list, list) and isinstance(topic, dict):
+        if topic.get("required_keywords"):
+            user_requirements["required_keywords"] = topic["required_keywords"]
+        elif "required_keywords" in user_requirements:
+            user_requirements.pop("required_keywords", None)
+        if topic.get("preferred_keywords"):
+            user_requirements["preferred_keywords"] = topic["preferred_keywords"]
+        elif "preferred_keywords" in user_requirements:
+            user_requirements.pop("preferred_keywords", None)
+
     # 保存到 state（Researcher 和 Writer 会读取）
     state["topic"] = topic
     state["writer_brief"] = writer_brief

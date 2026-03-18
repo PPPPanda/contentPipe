@@ -85,10 +85,7 @@ user_requirements:
   audience: "目标读者画像"
   tone: "真实、有洞察、不空谈"
   length_preference: "中长"
-  required_keywords:
-    - "关键词A"
-  preferred_keywords:
-    - "关键词B"
+  # ⚠️ 全局关键词只放所有话题通用的；话题特有关键词放在各 topic 内部
   negative_keywords:
     - "避免词A"
   hard_constraints:
@@ -159,6 +156,11 @@ topics:
     content_angle: "具体切入角度"
     proposed_thesis: "文章核心结论/观点"
     target_output_shape: "分析型/观点型/攻略型/体验型"
+    # ⚠️ 每个话题独立的关键词（不要把其他话题的关键词混进来）
+    required_keywords:
+      - "该话题必须出现的关键词"
+    preferred_keywords:
+      - "该话题优先使用的关键词"
     direction_references:
       - ref_id: DR001
         title: "参考标题"
@@ -247,3 +249,4 @@ status:
 5. **所有 URL 必须来自搜索结果**：不要编造 URL
 6. **3 个话题必须有差异化**：不能是同一话题的 3 个变体，要有不同切入点
 7. **每个话题都要有热度证据**：不能凭感觉说"很热"，必须有搜索数据支撑
+8. **关键词隔离**：每个话题的 `required_keywords` 和 `preferred_keywords` 必须只包含该话题相关的关键词。不要把话题 B 的关键词放进话题 A。全局 `user_requirements` 中不要放 `required_keywords`/`preferred_keywords`（已移到各 topic 内部）

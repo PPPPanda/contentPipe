@@ -619,6 +619,20 @@ async def api_select_topic(request: Request, run_id: str):
     raw["topic"] = chosen
     raw["writer_brief"] = chosen.get("writer_brief", {})
     raw["handoff_to_researcher"] = chosen.get("handoff_to_researcher", {})
+
+    # 话题特有关键词覆盖全局 user_requirements（防止其他话题的关键词污染 Writer）
+    ur = raw.get("user_requirements", {})
+    if chosen.get("required_keywords"):
+        ur["required_keywords"] = chosen["required_keywords"]
+    elif "required_keywords" in ur:
+        # 话题没有独立关键词 → 清空全局的，避免混入
+        ur.pop("required_keywords", None)
+    if chosen.get("preferred_keywords"):
+        ur["preferred_keywords"] = chosen["preferred_keywords"]
+    elif "preferred_keywords" in ur:
+        ur.pop("preferred_keywords", None)
+    raw["user_requirements"] = ur
+
     _save_state(raw)
 
     logger.info("Topic selected: %s for run %s", topic_id, run_id)
