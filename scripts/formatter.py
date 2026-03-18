@@ -41,6 +41,7 @@ def markdown_to_wechat_html(md_text: str, platform: str = "wechat", template_nam
     html_parts: list[str] = []
     in_list = False
     list_type = ""
+    list_counter = 0
     in_blockquote = False
     in_code_block = False
     code_block_lines: list[str] = []
@@ -60,7 +61,6 @@ def markdown_to_wechat_html(md_text: str, platform: str = "wechat", template_nam
                 code_block_lines = []
                 # 关闭之前未关闭的列表/引用
                 if in_list:
-                    html_parts.append(f"</{list_type}>")
                     in_list, list_type = False, ""
                 if in_blockquote:
                     html_parts.append("</section>")
@@ -89,7 +89,6 @@ def markdown_to_wechat_html(md_text: str, platform: str = "wechat", template_nam
         # 空行：关闭当前块
         if not stripped:
             if in_list:
-                html_parts.append(f"</{list_type}>")
                 in_list = False
                 list_type = ""
             if in_blockquote:
@@ -118,34 +117,38 @@ def markdown_to_wechat_html(md_text: str, platform: str = "wechat", template_nam
             html_parts.append("</section>")
             in_blockquote = False
 
-        # 无序列表
+        # 无序列表 — 用 <p> 模拟（微信编辑器 <ul>/<li> 内 <strong> 会断行）
         if stripped.startswith("- ") or stripped.startswith("* "):
             text = stripped[2:].strip()
             if not in_list:
-                html_parts.append('<ul style="padding-left:20px;margin:12px 0;">')
-                in_list, list_type = True, "ul"
+                in_list, list_type, list_counter = True, "ul", 0
             elif list_type != "ul":
-                html_parts.append(f"</{list_type}>")
-                html_parts.append('<ul style="padding-left:20px;margin:12px 0;">')
-                list_type = "ul"
-            html_parts.append(f'<li {styles["li"]}>{_inline_format(text, styles)}</li>')
+                in_list, list_type, list_counter = True, "ul", 0
+            html_parts.append(
+                f'<p style="font-size:16px;color:#333;margin:4px 0;line-height:1.8;'
+                f'padding-left:1.5em;text-indent:-1.2em;">'
+                f'<span style="color:#999;margin-right:4px;">•</span>'
+                f'{_inline_format(text, styles)}</p>'
+            )
             continue
         elif in_list and not re.match(r"^\d+\.\s+", stripped):
-            html_parts.append(f"</{list_type}>")
             in_list, list_type = False, ""
 
-        # 有序列表
+        # 有序列表 — 用 <p> 模拟
         m = re.match(r"^(\d+)\.\s+(.+)", stripped)
         if m:
             text = m.group(2)
             if not in_list:
-                html_parts.append('<ol style="padding-left:20px;margin:12px 0;">')
-                in_list, list_type = True, "ol"
+                in_list, list_type, list_counter = True, "ol", 0
             elif list_type != "ol":
-                html_parts.append(f"</{list_type}>")
-                html_parts.append('<ol style="padding-left:20px;margin:12px 0;">')
-                list_type = "ol"
-            html_parts.append(f'<li {styles["li"]}>{_inline_format(text, styles)}</li>')
+                in_list, list_type, list_counter = True, "ol", 0
+            list_counter += 1
+            html_parts.append(
+                f'<p style="font-size:16px;color:#333;margin:4px 0;line-height:1.8;'
+                f'padding-left:1.5em;text-indent:-1.2em;">'
+                f'<span style="color:#999;margin-right:4px;">{list_counter}.</span>'
+                f'{_inline_format(text, styles)}</p>'
+            )
             continue
 
         # 分隔线
@@ -156,8 +159,7 @@ def markdown_to_wechat_html(md_text: str, platform: str = "wechat", template_nam
         # 普通段落
         html_parts.append(f'<p {styles["p"]}>{_inline_format(stripped, styles)}</p>')
 
-    if in_list:
-        html_parts.append(f"</{list_type}>")
+    # in_list 不再需要关闭标签（已改用 <p> 模拟列表）
     if in_blockquote:
         html_parts.append("</section>")
 
