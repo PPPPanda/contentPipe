@@ -377,21 +377,41 @@ def scout_node(state: ContentState) -> ContentState:
         max_tokens=8192,
     )
 
-    # 从新 schema 提取各部分
+    # ── v2 多话题 / v1 单话题 兼容 ──
+    topics_list = parsed.get("topics", [])
     topic = parsed.get("topic", {})
-    # 兼容旧 schema：如果有 suggestions 列表，取第一个
-    if not topic and "suggestions" in parsed:
-        suggestions = parsed["suggestions"]
-        topic = suggestions[0] if suggestions else {}
 
-    # 新 schema 特有字段
-    writer_brief = parsed.get("writer_brief", {})
-    handoff = parsed.get("handoff_to_researcher", {})
+    if topics_list and isinstance(topics_list, list):
+        # v2 模式：3 个话题候选，默认选第 1 个（用户在审核阶段可改）
+        selected_id = parsed.get("selected_topic_id", "")
+        chosen = None
+        if selected_id:
+            chosen = next((t for t in topics_list if t.get("topic_id") == selected_id), None)
+        if not chosen:
+            chosen = topics_list[0]  # 默认第 1 个（rank=1）
+        topic = chosen
+        writer_brief = chosen.get("writer_brief", {})
+        handoff = chosen.get("handoff_to_researcher", {})
+        state["scout_topics"] = topics_list  # 保存全部候选供审核页展示
+    elif topic:
+        # v1 兼容
+        writer_brief = parsed.get("writer_brief", {})
+        handoff = parsed.get("handoff_to_researcher", {})
+        state["scout_topics"] = [topic]
+    else:
+        # 兼容旧 schema：suggestions 列表
+        suggestions = parsed.get("suggestions", [])
+        topic = suggestions[0] if suggestions else {}
+        writer_brief = parsed.get("writer_brief", {})
+        handoff = parsed.get("handoff_to_researcher", {})
+        state["scout_topics"] = suggestions or [topic]
+
     reference_articles = parsed.get("reference_articles", [])
     user_requirements = parsed.get("user_requirements", {})
     reference_index = parsed.get("reference_index", {})
     link_usage_policy = parsed.get("link_usage_policy", {})
     scout_summary = parsed.get("scout_process_summary", {})
+    search_log = parsed.get("search_execution_log", {})
 
     # 保存到 state（Researcher 和 Writer 会读取）
     state["topic"] = topic
@@ -402,6 +422,7 @@ def scout_node(state: ContentState) -> ContentState:
     state["reference_index"] = reference_index
     state["link_usage_policy"] = link_usage_policy
     state["scout_process_summary"] = scout_summary
+    state["search_execution_log"] = search_log
 
     # 执行元信息
     state["_node_context"] = state.get("_node_context", {})

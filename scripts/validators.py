@@ -116,26 +116,51 @@ def validate_topic_yaml(text: str) -> ValidationResult:
     if not isinstance(parsed, dict):
         return ValidationResult(ok=False, message="topic.yaml top-level must be a mapping", details=[f"got {type(parsed).__name__}"])
 
+    # v2: topics 列表（3 个候选），兼容 v1: 单个 topic
+    topics = parsed.get("topics")
     topic = parsed.get("topic")
-    writer_brief = parsed.get("writer_brief")
-    handoff = parsed.get("handoff_to_researcher")
 
-    if topic is None:
-        details.append("missing required top-level key: topic")
-    else:
+    if topics is not None:
+        # v2 模式：topics 列表
+        if not isinstance(topics, list):
+            details.append("topics must be a list")
+        elif len(topics) < 1:
+            details.append("topics list must have at least 1 topic")
+        else:
+            for i, t in enumerate(topics):
+                _ensure_mapping(t, f"topics[{i}]", details)
+                if isinstance(t, dict) and not str(t.get("title", "")).strip():
+                    details.append(f"topics[{i}].title is required and must be non-empty")
+                # 每个话题应包含 writer_brief 和 handoff_to_researcher
+                if isinstance(t, dict) and not isinstance(t.get("writer_brief"), dict):
+                    details.append(f"topics[{i}].writer_brief is required")
+                if isinstance(t, dict) and not isinstance(t.get("handoff_to_researcher"), dict):
+                    details.append(f"topics[{i}].handoff_to_researcher is required")
+        # 检查搜索执行记录
+        search_log = parsed.get("search_execution_log")
+        if isinstance(search_log, dict):
+            skills_called = search_log.get("skills_called", [])
+            skill_names = {s.get("skill", "") for s in skills_called if isinstance(s, dict)}
+            for required_skill in ("contentpipe-multi-search", "contentpipe-agent-reach"):
+                if required_skill not in skill_names:
+                    details.append(f"search_execution_log missing required skill: {required_skill}")
+    elif topic is not None:
+        # v1 兼容模式：单个 topic
         _ensure_mapping(topic, "topic", details)
         if isinstance(topic, dict) and not str(topic.get("title", "")).strip():
             details.append("topic.title is required and must be non-empty")
-
-    if writer_brief is None:
-        details.append("missing required top-level key: writer_brief")
-    elif not isinstance(writer_brief, dict):
-        details.append("writer_brief must be a mapping/object")
-
-    if handoff is None:
-        details.append("missing required top-level key: handoff_to_researcher")
-    elif not isinstance(handoff, dict):
-        details.append("handoff_to_researcher must be a mapping/object")
+        writer_brief = parsed.get("writer_brief")
+        handoff = parsed.get("handoff_to_researcher")
+        if writer_brief is None:
+            details.append("missing required top-level key: writer_brief")
+        elif not isinstance(writer_brief, dict):
+            details.append("writer_brief must be a mapping/object")
+        if handoff is None:
+            details.append("missing required top-level key: handoff_to_researcher")
+        elif not isinstance(handoff, dict):
+            details.append("handoff_to_researcher must be a mapping/object")
+    else:
+        details.append("missing required key: topics (list) or topic (single)")
 
     if details:
         return ValidationResult(ok=False, message="topic.yaml failed schema checks", details=details)
