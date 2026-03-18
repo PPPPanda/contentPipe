@@ -218,6 +218,13 @@ def _inline_format(text: str, styles: dict) -> str:
     text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
     text = re.sub(r"`(.+?)`", r'<code style="background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:14px;color:#d63384;">\1</code>', text)
     text = re.sub(r"\[(.+?)\]\((.+?)\)", r'<a href="\2" style="color:#576b95;text-decoration:none;">\1</a>', text)
+    # 微信公众号兼容：单字母 <strong>X</strong> 后紧跟字母会被编辑器断行
+    # 修复：将 <strong>X</strong>word 合并为 <strong>Xword</strong>
+    text = re.sub(
+        r'<strong([^>]*)>(\w{1,2})</strong>(\w+)',
+        r'<strong\1>\2\3</strong>',
+        text,
+    )
     return text
 
 
