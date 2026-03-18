@@ -42,11 +42,49 @@ def markdown_to_wechat_html(md_text: str, platform: str = "wechat", template_nam
     in_list = False
     list_type = ""
     in_blockquote = False
+    in_code_block = False
+    code_block_lines: list[str] = []
+    code_block_lang = ""
 
     styles = _get_platform_styles(platform, template_name)
 
     for line in lines:
         stripped = line.strip()
+
+        # 代码块处理（```...```）
+        if stripped.startswith("```"):
+            if not in_code_block:
+                # 进入代码块
+                in_code_block = True
+                code_block_lang = stripped[3:].strip()
+                code_block_lines = []
+                # 关闭之前未关闭的列表/引用
+                if in_list:
+                    html_parts.append(f"</{list_type}>")
+                    in_list, list_type = False, ""
+                if in_blockquote:
+                    html_parts.append("</section>")
+                    in_blockquote = False
+            else:
+                # 退出代码块 → 生成 HTML
+                code_text = "\n".join(code_block_lines)
+                import html as html_mod
+                escaped = html_mod.escape(code_text)
+                html_parts.append(
+                    '<section style="background:#f6f8fa;border-radius:8px;padding:14px 16px;'
+                    'margin:12px 0;overflow-x:auto;border:1px solid #e1e4e8;">'
+                    f'<pre style="margin:0;font-family:Menlo,Consolas,\'Courier New\',monospace;'
+                    f'font-size:13px;line-height:1.6;color:#24292e;white-space:pre-wrap;'
+                    f'word-wrap:break-word;">{escaped}</pre></section>'
+                )
+                in_code_block = False
+                code_block_lines = []
+                code_block_lang = ""
+            continue
+
+        if in_code_block:
+            code_block_lines.append(line)  # 保留原始缩进
+            continue
 
         # 空行：关闭当前块
         if not stripped:
