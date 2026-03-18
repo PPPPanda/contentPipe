@@ -31,12 +31,12 @@ responsibility: 核查关键事实，围绕 Scout 锁定方向深挖数据、案
 - `contentpipe-social-research` — 社交平台讨论检索
 - `contentpipe-multi-search` — 17 个搜索引擎集成（百度/Google/Bing/360/搜狗/微信搜索/头条等），无需 API key，通过 web_fetch 直接调用
 - `contentpipe-baidu-search` — 百度千帆搜索 API，返回结构化搜索结果，适合中文事实核查和数据检索
-- `agent-reach` — 多平台社交媒体搜索（Twitter/X、Reddit、GitHub、YouTube、Bilibili、小红书等）
+- `contentpipe-agent-reach` — 多平台社交媒体搜索（Twitter/X、Reddit、GitHub、YouTube、Bilibili、小红书等）
 
 **核查策略：**
 - 事实核查优先用 `contentpipe-baidu-search`（结构化结果）+ `contentpipe-multi-search`（多引擎交叉验证）
 - 数据和权威来源用 `contentpipe-multi-search` 的 Google/Bing 搜索
-- 社区观点和争议用 `agent-reach` 搜索 Twitter/Reddit/小红书
+- 社区观点和争议用 `contentpipe-agent-reach` 搜索 Twitter/Reddit/小红书
 - 学术和技术内容用 `contentpipe-multi-search` 的 WolframAlpha
 - **≥2 个独立来源交叉确认才能标记为 verified**
 

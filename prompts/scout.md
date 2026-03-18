@@ -32,12 +32,12 @@
 - `contentpipe-social-research` — 社交平台讨论检索
 - `contentpipe-multi-search` — 17 个搜索引擎集成（百度/Google/Bing/360/搜狗/微信搜索/头条等），无需 API key，通过 web_fetch 直接调用
 - `contentpipe-baidu-search` — 百度千帆搜索 API，返回结构化搜索结果，适合中文热点和时事检索
-- `agent-reach` — 多平台社交媒体搜索（Twitter/X、Reddit、GitHub、YouTube、Bilibili、小红书等）
+- `contentpipe-agent-reach` — 多平台社交媒体搜索（Twitter/X、Reddit、GitHub、YouTube、Bilibili、小红书等）
 
 **搜索策略：**
 - 中文话题优先用 `contentpipe-baidu-search` + `contentpipe-multi-search`（百度/搜狗/微信搜索）
 - 国际话题用 `contentpipe-multi-search`（Google/Bing/DuckDuckGo）
-- 社区讨论用 `agent-reach` 搜索 Twitter/小红书/Bilibili
+- 社区讨论用 `contentpipe-agent-reach` 搜索 Twitter/小红书/Bilibili
 - 多引擎交叉验证，不要只依赖单一搜索源
 
 ## 核心原则
