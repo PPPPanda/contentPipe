@@ -144,11 +144,11 @@ class LLMBrowserEngine(ImageEngine):
         output_path: str,
     ) -> str:
         """构建给 LLM 的任务指令"""
-        return f"""使用 chatgpt-browser 技能，在 ChatGPT 上生成一张图片并下载到本地。
+        return f"""使用 contentpipe-chatgpt-browser 技能，在 ChatGPT 上生成一张图片并下载到本地。
 
 ## 任务要求
 
-1. **先阅读 chatgpt-browser 的 SKILL.md**，严格按照技能文档操作
+1. **先阅读 contentpipe-chatgpt-browser 的 SKILL.md**，严格按照技能文档操作
 2. 导航到 ChatGPT 图片生成页面（/images）
 3. 输入以下提示词生成图片：
 
