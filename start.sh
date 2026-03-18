@@ -23,7 +23,9 @@ CONTENTPIPE_AGENT_WORKSPACE="${CONTENTPIPE_AGENT_WORKSPACE:-$HOME/.openclaw/work
 CONTENTPIPE_AGENT_DIR="${CONTENTPIPE_AGENT_DIR:-$HOME/.openclaw/agents/${CONTENTPIPE_AGENT_ID}/agent}"
 CONTENTPIPE_AGENT_MODEL="${CONTENTPIPE_AGENT_MODEL:-}"
 CONTENTPIPE_SKILLS_DIR="${CONTENTPIPE_SKILLS_DIR:-$PLUGIN_DIR/skills}"
-CONTENTPIPE_AGENT_SKILLS_JSON="${CONTENTPIPE_AGENT_SKILLS_JSON:-[\"contentpipe-wechat-reader\",\"contentpipe-url-reader\",\"contentpipe-web-research\",\"contentpipe-social-research\",\"contentpipe-style-reference\",\"contentpipe-wechat-draft-publisher\",\"multi-search-engine\",\"baidu-web-search\",\"agent-reach\",\"desktop-control\",\"browser-relay-activator\",\"chatgpt-browser\"]}"
+# skills 列表不再声明 — agent 可使用所有 extraDirs 中发现的 skill
+# 如需限制，取消注释并指定白名单：
+# CONTENTPIPE_AGENT_SKILLS_JSON="${CONTENTPIPE_AGENT_SKILLS_JSON:-[\"contentpipe-wechat-reader\",\"chatgpt-browser\"]}"
 
 resolve_python() {
     if [ -n "${CONTENTPIPE_PYTHON:-}" ] && [ -x "${CONTENTPIPE_PYTHON}" ]; then
@@ -224,7 +226,9 @@ PY
     fi
     openclaw config set "agents.list[$AGENT_INDEX].tools.allow" '[]' --strict-json
     openclaw config set "agents.list[$AGENT_INDEX].tools.deny" '[]' --strict-json
-    openclaw config set "agents.list[$AGENT_INDEX].skills" "$CONTENTPIPE_AGENT_SKILLS_JSON" --strict-json
+    # skills 不声明 → agent 可使用所有 extraDirs 中发现的 skill
+    # 如需白名单限制，设置环境变量 CONTENTPIPE_AGENT_SKILLS_JSON 后取消注释：
+    # openclaw config set "agents.list[$AGENT_INDEX].skills" "$CONTENTPIPE_AGENT_SKILLS_JSON" --strict-json
 
     MERGED_SKILL_DIRS=$(CONTENTPIPE_SKILLS_DIR="$CONTENTPIPE_SKILLS_DIR" "$PYTHON_BIN" - <<'PY'
 import json, os, subprocess
@@ -268,7 +272,7 @@ PY
 - workspace: $CONTENTPIPE_AGENT_WORKSPACE
 - agentDir: $CONTENTPIPE_AGENT_DIR
 - skill source: $CONTENTPIPE_SKILLS_DIR
-- agent skills: $CONTENTPIPE_AGENT_SKILLS_JSON
+- agent skills: (all discovered — no filter)
 EOF
 }
 

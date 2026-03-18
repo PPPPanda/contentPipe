@@ -24,6 +24,7 @@ from .api_pollinations import PollinationsEngine
 from .api_dalle import DallE3Engine
 from .api_dashscope import DashScopeEngine
 from .browser_engine import BrowserEngine, SITE_CONFIGS
+from .llm_browser_engine import LLMBrowserEngine
 
 
 # 引擎注册表
@@ -44,8 +45,18 @@ def create_engine(name: str, **kwargs) -> ImageEngine:
     Args:
         name: 引擎名称
             API: "pollinations", "dall-e-3", "dashscope"
-            浏览器: "browser:jimeng", "browser:tongyi"
+            浏览器(纯 Python): "browser:jimeng", "browser:tongyi"
+            LLM 浏览器(推荐): "llm-browser:chatgpt"
     """
+    # LLM 浏览器引擎（推荐）— LLM 自己操控浏览器，通过 chatgpt-browser skill
+    if name.startswith("llm-browser:"):
+        site = name.split(":", 1)[1]
+        return LLMBrowserEngine(site=site, **kwargs)
+
+    if name == "llm-browser":
+        return LLMBrowserEngine(site="chatgpt", **kwargs)
+
+    # 旧的纯 Python 浏览器引擎（保留兼容）
     if name.startswith("browser:"):
         site = name.split(":", 1)[1]
         return BrowserEngine(site=site, **kwargs)
