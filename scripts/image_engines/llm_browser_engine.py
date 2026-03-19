@@ -18,11 +18,14 @@ LLM 浏览器引擎 — 通过 LLM Session + chatgpt-browser Skill 生成图片
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import re
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from .base import ImageEngine, ImageResult
@@ -32,6 +35,22 @@ logger = logging.getLogger(__name__)
 # LLM session 超时（秒）
 DEFAULT_TIMEOUT = 480  # 8 分钟，留够生成+下载时间
 MAX_RETRIES = 2
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).astimezone().isoformat(timespec="milliseconds")
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256((text or "").encode("utf-8")).hexdigest()
+
+
+def _sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 class LLMBrowserEngine(ImageEngine):
@@ -59,6 +78,134 @@ class LLMBrowserEngine(ImageEngine):
             "OPENCLAW_GATEWAY_URL", "http://localhost:18789"
         )
 
+    def _build_audit_context(self, output_path: Path, prompt: str, width: int, height: int) -> dict:
+        run_id = ""
+        placement_id = output_path.stem
+        parts = list(output_path.parts)
+        try:
+            runs_idx = parts.index("runs")
+            run_id = parts[runs_idx + 1]
+        except Exception:
+            pass
+        audit_dir = output_path.parent.parent / "image_sessions"
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        stem = placement_id or output_path.stem or f"img_{int(time.time())}"
+        return {
+            "run_id": run_id,
+            "placement_id": stem,
+            "output_path": str(output_path),
+            "audit_dir": audit_dir,
+            "audit_json_path": audit_dir / f"{stem}.audit.json",
+            "trace_jsonl_path": audit_dir / f"{stem}.trace.jsonl",
+            "agent_task_path": audit_dir / f"{stem}.agent.txt",
+            "stdout_path": audit_dir / f"{stem}.stdout.log",
+            "stderr_path": audit_dir / f"{stem}.stderr.log",
+            "prompt_sha256": _sha256_text(prompt),
+            "requested_width": width,
+            "requested_height": height,
+        }
+
+    def _append_trace(self, audit: dict, event: str, **payload) -> None:
+        path = audit.get("trace_jsonl_path")
+        if not path:
+            return
+        record = {"ts": _now_iso(), "event": event, **payload}
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    def _write_text(self, path: Path, text: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text or "", encoding="utf-8")
+
+    def _extract_agent_audit(self, text: str) -> dict | None:
+        raw = text or ""
+        m = re.search(r"AUDIT_JSON\s*:\s*", raw)
+        if not m:
+            return None
+        tail = raw[m.end():].lstrip()
+        try:
+            obj, _ = json.JSONDecoder().raw_decode(tail)
+            if isinstance(obj, dict):
+                return obj
+        except Exception:
+            return None
+        return None
+
+    def _collect_text_blobs(self, obj) -> list[str]:
+        blobs: list[str] = []
+        if isinstance(obj, str):
+            blobs.append(obj)
+        elif isinstance(obj, dict):
+            for v in obj.values():
+                blobs.extend(self._collect_text_blobs(v))
+        elif isinstance(obj, list):
+            for v in obj:
+                blobs.extend(self._collect_text_blobs(v))
+        return blobs
+
+    def _finalize_audit(self, audit: dict, *, session_id: str, status: str,
+                        task: str, spawn_result: dict | None, output_path: Path,
+                        elapsed_ms: int, check: dict, error: str = "") -> None:
+        stdout_text = (spawn_result or {}).get("stdout", "") or ""
+        stderr_text = (spawn_result or {}).get("stderr", "") or ""
+        parsed = (spawn_result or {}).get("parsed")
+        agent_audit = None
+        if stdout_text:
+            agent_audit = self._extract_agent_audit(stdout_text)
+        if agent_audit is None and parsed is not None:
+            for blob in self._collect_text_blobs(parsed):
+                agent_audit = self._extract_agent_audit(blob)
+                if agent_audit:
+                    break
+
+        file_meta = {
+            "path": str(output_path),
+            "exists": output_path.exists(),
+            "bytes": output_path.stat().st_size if output_path.exists() else 0,
+            "sha256": _sha256_file(output_path) if output_path.exists() else "",
+            "mime": f"image/{check.get('format','')}" if check.get("ok") else "",
+            "width": 0,
+            "height": 0,
+        }
+        dims = self._get_image_dimensions(output_path) if output_path.exists() else None
+        if dims:
+            file_meta["width"], file_meta["height"] = dims
+
+        summary = {
+            "run_id": audit.get("run_id", ""),
+            "placement_id": audit.get("placement_id", ""),
+            "engine": f"llm-browser:{self.site}",
+            "agent_id": self.agent_id,
+            "session_id": session_id,
+            "status": status,
+            "started_at": audit.get("started_at", ""),
+            "ended_at": _now_iso(),
+            "duration_ms": elapsed_ms,
+            "prompt": {
+                "text": task,
+                "sha256": _sha256_text(task),
+            },
+            "browser": {
+                "profile": "chrome",
+                "site": self.site,
+            },
+            "agent_audit": agent_audit or {},
+            "spawn": {
+                "status": (spawn_result or {}).get("status", ""),
+                "returncode": (spawn_result or {}).get("returncode"),
+            },
+            "output_file": file_meta,
+            "validation": check,
+            "error": error,
+            "artifacts": {
+                "agent_task_path": str(audit.get("agent_task_path")),
+                "stdout_path": str(audit.get("stdout_path")),
+                "stderr_path": str(audit.get("stderr_path")),
+                "trace_path": str(audit.get("trace_jsonl_path")),
+            },
+        }
+        (audit["audit_json_path"]).write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+
     def generate(
         self,
         prompt: str,
@@ -73,30 +220,56 @@ class LLMBrowserEngine(ImageEngine):
         start = time.time()
         output_path = Path(output_path) if output_path else Path(f"/tmp/llm_gen_{int(time.time())}.png")
         output_path.parent.mkdir(parents=True, exist_ok=True)
+        audit = self._build_audit_context(output_path, prompt, width, height)
+        audit["started_at"] = _now_iso()
+        self._append_trace(audit, "generate_start", output_path=str(output_path), width=width, height=height)
 
         # 构建比例说明
         ratio_hint = self._get_ratio_hint(width, height)
 
         # 构建 LLM 任务指令
         task = self._build_task(prompt, ratio_hint, width, height, str(output_path))
+        self._write_text(audit["agent_task_path"], task)
+        self._append_trace(audit, "agent_task_written", path=str(audit["agent_task_path"]))
 
         logger.info("llm_browser[%s]: spawning session for %s (%dx%d)",
                      self.site, output_path.name, width, height)
 
+        spawn_result = None
         try:
             # 通过 openclaw CLI 启动 session
-            result = self._spawn_session(task)
+            spawn_result = self._spawn_session(task)
 
-            if result is None:
+            if spawn_result is None:
                 raise RuntimeError("LLM session spawn failed or timed out")
+
+            self._write_text(audit["stdout_path"], (spawn_result or {}).get("stdout", "") or "")
+            self._write_text(audit["stderr_path"], (spawn_result or {}).get("stderr", "") or "")
+            self._append_trace(
+                audit,
+                "agent_turn_completed",
+                session_id=(spawn_result or {}).get("session_id", ""),
+                status=(spawn_result or {}).get("status", ""),
+                returncode=(spawn_result or {}).get("returncode"),
+            )
 
             # 等待文件落盘（agent 的 browser/exec 操作可能异步完成）
             elapsed = int((time.time() - start) * 1000)
-            check = self._wait_for_file(output_path, width, height, max_wait=120)
+            check = self._wait_for_file(output_path, width, height, max_wait=120, audit=audit)
 
             if check["ok"]:
                 logger.info("llm_browser[%s]: success, file=%s size=%d",
                             self.site, output_path.name, check["size"])
+                self._finalize_audit(
+                    audit,
+                    session_id=(spawn_result or {}).get("session_id", ""),
+                    status="success",
+                    task=task,
+                    spawn_result=spawn_result,
+                    output_path=output_path,
+                    elapsed_ms=elapsed,
+                    check=check,
+                )
                 return ImageResult(
                     success=True,
                     file_path=str(output_path),
@@ -106,7 +279,13 @@ class LLMBrowserEngine(ImageEngine):
                     generation_time_ms=elapsed,
                     width=width,
                     height=height,
-                    metadata={"site": self.site, "agent": self.agent_id},
+                    metadata={
+                        "site": self.site,
+                        "agent": self.agent_id,
+                        "session_id": (spawn_result or {}).get("session_id", ""),
+                        "audit_path": str(audit["audit_json_path"]),
+                        "trace_path": str(audit["trace_jsonl_path"]),
+                    },
                 )
             else:
                 raise RuntimeError(f"Image check failed: {check['reason']}")
@@ -114,12 +293,30 @@ class LLMBrowserEngine(ImageEngine):
         except Exception as e:
             elapsed = int((time.time() - start) * 1000)
             logger.error("llm_browser[%s]: failed: %s", self.site, e)
+            self._append_trace(audit, "generate_failed", error=str(e))
+            self._finalize_audit(
+                audit,
+                session_id=(spawn_result or {}).get("session_id", "") if spawn_result else "",
+                status="failed",
+                task=task,
+                spawn_result=spawn_result,
+                output_path=output_path,
+                elapsed_ms=elapsed,
+                check={"ok": False, "reason": str(e)},
+                error=str(e),
+            )
             return ImageResult(
                 success=False,
                 engine=f"llm-browser:{self.site}",
                 prompt_used=prompt,
                 generation_time_ms=elapsed,
                 error=str(e),
+                metadata={
+                    "site": self.site,
+                    "agent": self.agent_id,
+                    "audit_path": str(audit["audit_json_path"]),
+                    "trace_path": str(audit["trace_jsonl_path"]),
+                },
             )
 
     def is_available(self) -> bool:
@@ -176,7 +373,33 @@ Image size: {ratio_hint}, {width}x{height} pixels
 
 - 文件已保存到 `{output_path}`
 - 文件大小 > 10KB（确认是真实图片，不是错误页面）
-- 完成后输出：DONE"""
+- 完成后输出：DONE
+
+## 审计输出（必须追加在 DONE 后面）
+
+在 `DONE` 之后，继续输出以下结构化块（不要用 markdown code fence）：
+
+AUDIT_JSON:
+{{
+  "page_url": "当前页面 URL（如 /images 或 /c/...）",
+  "conversation_url": "当前对话 URL（如有）",
+  "selection_strategy": "你如何锁定当前这轮生成图片，例如 latest-image-block",
+  "download_button_seen": true,
+  "image_count_in_selected_block": 1,
+  "selected_image_url_domain": "仅域名或路径前缀，不要输出完整签名 URL",
+  "selected_image_file_id": "如能提取 file_xxx 则填，否则 null",
+  "selected_image_natural_width": 1536,
+  "selected_image_natural_height": 1024,
+  "cookie_names": ["oai-did", "_puid", "oai-sc"],
+  "download_method": "curl",
+  "notes": "可选备注",
+  "warnings": []
+}}
+
+注意：
+- **不要输出完整 cookies**
+- **不要输出完整带 sig 的图片 URL**
+- 只输出可审计但不泄密的信息"""
 
     def _spawn_session(self, task: str) -> dict | None:
         """通过 openclaw agent CLI 启动 LLM agent turn。
@@ -224,25 +447,48 @@ Image size: {ratio_hint}, {width}x{height} pixels
 
             if result.returncode == 0:
                 logger.info("llm_browser: agent turn completed (session=%s)", session_id)
+                parsed = None
                 try:
-                    return json.loads(clean_stdout)
+                    parsed = json.loads(clean_stdout)
                 except (json.JSONDecodeError, ValueError):
-                    return {"status": "completed", "session_id": session_id,
-                            "stdout": clean_stdout[:500]}
+                    parsed = None
+                return {
+                    "status": "completed",
+                    "session_id": session_id,
+                    "returncode": result.returncode,
+                    "stdout": clean_stdout,
+                    "stderr": stderr,
+                    "parsed": parsed,
+                }
             else:
                 logger.warning("llm_browser: agent turn failed (rc=%d, session=%s): %s",
                                result.returncode, session_id, stderr[:300])
                 # 即使 CLI 返回非零，图片可能已下载成功
-                return {"status": "error", "session_id": session_id,
-                        "stderr": stderr[:300]}
+                return {
+                    "status": "error",
+                    "session_id": session_id,
+                    "returncode": result.returncode,
+                    "stdout": clean_stdout,
+                    "stderr": stderr,
+                    "parsed": None,
+                }
 
-        except subprocess.TimeoutExpired:
+        except subprocess.TimeoutExpired as e:
             logger.warning("llm_browser: agent turn timed out after %ds (session=%s)",
                            self.timeout + 60, session_id)
             # 超时但图片可能已经下载了
-            return {"status": "timeout", "session_id": session_id}
+            stdout = (e.stdout or "") if isinstance(e.stdout, str) else ""
+            stderr = (e.stderr or "") if isinstance(e.stderr, str) else ""
+            return {
+                "status": "timeout",
+                "session_id": session_id,
+                "returncode": None,
+                "stdout": stdout,
+                "stderr": stderr,
+                "parsed": None,
+            }
 
-    def _wait_for_file(self, output_path: Path, width: int, height: int, max_wait: int = 120) -> dict:
+    def _wait_for_file(self, output_path: Path, width: int, height: int, max_wait: int = 120, audit: dict | None = None) -> dict:
         """等待文件出现并通过检查。
 
         Agent turn 返回后，浏览器/exec 操作可能仍在异步执行（DALL-E 生成 + curl 下载）。
@@ -253,9 +499,13 @@ Image size: {ratio_hint}, {width}x{height} pixels
         # 先立即检查一次
         check = self._check_result(output_path, width, height)
         if check["ok"]:
+            if audit:
+                self._append_trace(audit, "file_ready_immediate", size=check.get("size", 0), format=check.get("format", ""))
             return check
 
         logger.info("llm_browser: file not ready yet, polling up to %ds for %s", max_wait, output_path.name)
+        if audit:
+            self._append_trace(audit, "file_poll_start", max_wait=max_wait)
         poll_interval = 5  # 每 5 秒检查一次
         waited = 0
         while waited < max_wait:
@@ -264,17 +514,23 @@ Image size: {ratio_hint}, {width}x{height} pixels
             check = self._check_result(output_path, width, height)
             if check["ok"]:
                 logger.info("llm_browser: file appeared after %ds polling for %s", waited, output_path.name)
+                if audit:
+                    self._append_trace(audit, "file_ready_after_poll", waited_seconds=waited, size=check.get("size", 0), format=check.get("format", ""))
                 return check
             # 如果文件存在但太小，可能还在下载中
             if output_path.exists():
                 size = output_path.stat().st_size
                 if size > 0:
                     logger.info("llm_browser: file exists but %d bytes (waiting for complete download)", size)
+                    if audit:
+                        self._append_trace(audit, "file_exists_waiting", waited_seconds=waited, size=size)
 
         # 最终检查
         final = self._check_result(output_path, width, height)
         if not final["ok"]:
             logger.warning("llm_browser: file still not ready after %ds for %s: %s", max_wait, output_path.name, final.get("reason"))
+            if audit:
+                self._append_trace(audit, "file_poll_failed", waited_seconds=max_wait, reason=final.get("reason", "unknown"))
         return final
 
     def _check_result(self, output_path: Path, width: int, height: int) -> dict:
