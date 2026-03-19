@@ -141,6 +141,11 @@ scout_process_summary:
     - "考虑过的角度B（最终入选/淘汰原因）"
 
 # ── 3 个话题候选（按热度/价值排序）──
+# ⚠️ 输出规则：
+#   T001（主推荐）：必须包含完整的 writer_brief + handoff_to_researcher
+#   T002（备选）：轻量版，只需 title/summary/angle/thesis/heat/keywords，不需要 writer_brief 和 handoff
+#   T003（备选）：轻量版，同 T002
+#   如果用户选中了备选话题，pipeline 会单独要求你补全完整规划
 topics:
   - topic_id: T001
     rank: 1                        # 推荐排名
@@ -166,6 +171,7 @@ topics:
         title: "参考标题"
         url: "https://..."
         role: "direction_reference"
+    # ↓↓↓ 以下两个字段只有 T001（主推荐）需要填写 ↓↓↓
     writer_brief:
       target_output: "一篇可直接发布的公众号文章"
       core_message: "Writer 必须讲清楚的核心信息"
