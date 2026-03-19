@@ -252,12 +252,23 @@ def _inline_format(text: str, styles: dict) -> str:
 
 def insert_images(content_html: str, placements: list, image_map: dict, platform: str, run_id: str,
                    template_name: str = "") -> str:
-    """在 HTML 中按 Director 的 after_section 精确插入图片
+    """在 HTML 中按 Director 的 after_section 精确插入图片。
 
     优先使用 after_section（匹配 h2 标题）定位，
     fallback 到 after_paragraph（全局段落序号）。
+
+    注意：
+    - section 匹配会做标题规范化（去引号/标点/空白），仅用于定位，不影响最终显示
+    - after_paragraph 表示“该 section 第 N 段后”，不会把 h2 标题本身算作第 1 段
     """
     import re as _re
+
+    def _normalize_heading(text: str) -> str:
+        text = _re.sub(r'<[^>]+>', '', str(text or '')).strip()
+        text = text.lstrip('#').strip()
+        text = text.lower()
+        # 去掉标点、引号、空白；仅用于内部匹配，不改正文显示
+        return _re.sub(r'[\W_]+', '', text, flags=_re.UNICODE)
 
     raw_lines = content_html.split("\n")
     blocks: list[str] = []
@@ -285,18 +296,38 @@ def insert_images(content_html: str, placements: list, image_map: dict, platform
         'style="width:100%;border-radius:6px;margin:12px 0;display:block;"'
     )
 
-    # ── 建立 section 索引：h2 标题 → block 序号（section 最后一个段落的位置） ──
-    section_map: dict[str, int] = {}  # normalized_title → section 最后一个 block 的 index
-    current_section_title = ""
+    # ── 建立 section 索引：规范化标题 → section 元数据 ──
+    sections: list[dict] = []
+    current_section: dict | None = None
+    global_paragraph_positions: list[int] = []
+
     for i, block in enumerate(blocks):
-        # 检测 h2 标题
+        stripped = block.strip()
         h2_match = _re.search(r'<h2[^>]*>(.*?)</h2>', block, _re.DOTALL)
         if h2_match:
             title_text = _re.sub(r'<[^>]+>', '', h2_match.group(1)).strip()
-            current_section_title = title_text
-        # 每个 block 都更新当前 section 的"最后位置"
-        if current_section_title:
-            section_map[current_section_title] = i
+            current_section = {
+                "title": title_text,
+                "norm": _normalize_heading(title_text),
+                "heading_idx": i,
+                "paragraph_positions": [],
+                "last_content_idx": i,
+            }
+            sections.append(current_section)
+            continue
+
+        is_paragraph = bool(_re.search(r'^\s*<p\b', stripped))
+        is_separator = bool(_re.search(r'^\s*<section\b', stripped))
+
+        if is_paragraph:
+            global_paragraph_positions.append(i)
+
+        if current_section is not None:
+            if is_paragraph:
+                current_section["paragraph_positions"].append(i)
+                current_section["last_content_idx"] = i
+            elif not is_separator and stripped:
+                current_section["last_content_idx"] = i
 
     # ── 为每个 placement 计算精确插入位置 ──
     valid_placements = [
@@ -305,36 +336,44 @@ def insert_images(content_html: str, placements: list, image_map: dict, platform
 
     for placement, _ in valid_placements:
         after_section = placement.get("after_section", "")
-        # 去掉 Markdown ## 前缀
         section_key = after_section.lstrip("#").strip()
+        section_norm = _normalize_heading(section_key)
+        matched_section = None
 
-        # 尝试精确匹配 section 标题
-        matched_pos = None
-        if section_key:
-            # 精确匹配
-            if section_key in section_map:
-                matched_pos = section_map[section_key]
-            else:
-                # 模糊匹配：section_key 是标题的子串
-                for title, pos in section_map.items():
-                    if section_key in title or title in section_key:
-                        matched_pos = pos
+        if section_norm:
+            for sec in sections:
+                if sec["norm"] == section_norm:
+                    matched_section = sec
+                    break
+            if matched_section is None:
+                for sec in sections:
+                    if section_norm and (section_norm in sec["norm"] or sec["norm"] in section_norm):
+                        matched_section = sec
                         break
 
-        if matched_pos is not None:
-            # 在 section 内偏移 after_paragraph 个段落
-            inner_offset = placement.get("after_paragraph", 0)
-            # 找这个 section 的起始位置
-            section_start = 0
-            for title, pos in section_map.items():
-                if title == (section_key if section_key in section_map else ""):
-                    break
-                section_start = pos + 1
-            # 在 section 起始位置 + 偏移量处插入
-            placement["_computed_pos"] = min(section_start + inner_offset, matched_pos)
+        inner_offset = int(placement.get("after_paragraph", 0) or 0)
+        if matched_section is not None:
+            para_positions = matched_section.get("paragraph_positions", [])
+            if para_positions:
+                if inner_offset <= 0:
+                    placement["_computed_pos"] = para_positions[0]
+                elif inner_offset <= len(para_positions):
+                    placement["_computed_pos"] = para_positions[inner_offset - 1] + 1
+                else:
+                    placement["_computed_pos"] = matched_section.get("last_content_idx", para_positions[-1]) + 1
+            else:
+                placement["_computed_pos"] = matched_section.get("heading_idx", 0) + 1
         else:
-            # Fallback: 用全局 after_paragraph
-            placement["_computed_pos"] = placement.get("after_paragraph", 0)
+            # Fallback: 用全局 after_paragraph（按全文段落序号，而不是 block 序号）
+            if global_paragraph_positions:
+                if inner_offset <= 0:
+                    placement["_computed_pos"] = global_paragraph_positions[0]
+                elif inner_offset <= len(global_paragraph_positions):
+                    placement["_computed_pos"] = global_paragraph_positions[inner_offset - 1] + 1
+                else:
+                    placement["_computed_pos"] = global_paragraph_positions[-1] + 1
+            else:
+                placement["_computed_pos"] = min(inner_offset, len(blocks))
 
     # 防碰撞：如果多张图位置相同，自动间隔 1
     positions_used = set()
