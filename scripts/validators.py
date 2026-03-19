@@ -32,17 +32,34 @@ def _strip_code_fence(text: str) -> str:
     return text
 
 
-def _yaml_error_details(exc: Exception) -> list[str]:
+def _yaml_error_details(exc: Exception, text: str = "") -> list[str]:
     details: list[str] = []
     mark = getattr(exc, "problem_mark", None)
     if mark is not None:
-        details.append(f"line {mark.line + 1}, column {mark.column + 1}")
+        line_no = mark.line + 1
+        col_no = mark.column + 1
+        details.append(f"line {line_no}, column {col_no}")
     problem = getattr(exc, "problem", None)
     if problem:
         details.append(str(problem))
     context = getattr(exc, "context", None)
     if context:
         details.append(str(context))
+
+    # 把报错点附近 3-5 行上下文一起喂回 LLM，提升修复成功率
+    if text and mark is not None:
+        lines = text.splitlines()
+        if 1 <= line_no <= len(lines):
+            start = max(1, line_no - 3)
+            end = min(len(lines), line_no + 3)
+            details.append("error context:")
+            for idx in range(start, end + 1):
+                prefix = ">>" if idx == line_no else "  "
+                details.append(f"{prefix} {idx:>4}: {lines[idx - 1][:240]}")
+                if idx == line_no:
+                    pointer = " " * max(col_no - 1, 0) + "^"
+                    details.append(f"      {pointer[:240]}")
+
     if not details:
         details.append(str(exc))
     return details
@@ -108,9 +125,9 @@ def validate_topic_yaml(text: str) -> ValidationResult:
                 parsed = yaml.safe_load(repaired)
                 raw = repaired
             except Exception:
-                return ValidationResult(ok=False, message="topic.yaml is not valid YAML (repair failed)", details=_yaml_error_details(exc))
+                return ValidationResult(ok=False, message="topic.yaml is not valid YAML (repair failed)", details=_yaml_error_details(exc, raw))
         else:
-            return ValidationResult(ok=False, message="topic.yaml is not valid YAML", details=_yaml_error_details(exc))
+            return ValidationResult(ok=False, message="topic.yaml is not valid YAML", details=_yaml_error_details(exc, raw))
 
     details: list[str] = []
     if not isinstance(parsed, dict):
@@ -183,9 +200,9 @@ def validate_research_yaml(text: str) -> ValidationResult:
                 parsed = yaml.safe_load(repaired)
                 raw = repaired  # 用修复后的版本继续校验
             except Exception:
-                return ValidationResult(ok=False, message="research.yaml is not valid YAML (repair failed)", details=_yaml_error_details(exc))
+                return ValidationResult(ok=False, message="research.yaml is not valid YAML (repair failed)", details=_yaml_error_details(exc, raw))
         else:
-            return ValidationResult(ok=False, message="research.yaml is not valid YAML", details=_yaml_error_details(exc))
+            return ValidationResult(ok=False, message="research.yaml is not valid YAML", details=_yaml_error_details(exc, raw))
 
     details: list[str] = []
     if not isinstance(parsed, dict):
