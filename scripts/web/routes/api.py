@@ -77,14 +77,32 @@ def _apply_artifact_to_state_minimally(state: dict, node_id: str, artifact_text:
         parsed = _yaml.safe_load(artifact_text) or {}
         if not isinstance(parsed, dict):
             raise ValueError("topic.yaml top-level must be a mapping")
-        state["topic"] = parsed.get("topic", {}) or {}
-        state["writer_brief"] = parsed.get("writer_brief", {}) or {}
-        state["handoff_to_researcher"] = parsed.get("handoff_to_researcher", {}) or {}
+        # v2 多话题
+        topics_list = parsed.get("topics", [])
+        if topics_list and isinstance(topics_list, list):
+            state["scout_topics"] = topics_list
+            # 重新选中：保留当前 selected_topic_id，若已无效则选第一个
+            sel_id = state.get("selected_topic_id", "")
+            valid_ids = [t.get("topic_id") for t in topics_list]
+            if sel_id not in valid_ids:
+                sel_id = valid_ids[0] if valid_ids else ""
+                state["selected_topic_id"] = sel_id
+            # 用选中的话题更新顶级字段
+            chosen = next((t for t in topics_list if t.get("topic_id") == sel_id), topics_list[0] if topics_list else {})
+            state["topic"] = chosen
+            state["writer_brief"] = chosen.get("writer_brief", {}) or {}
+            state["handoff_to_researcher"] = chosen.get("handoff_to_researcher", {}) or {}
+        else:
+            # v1 兼容
+            state["topic"] = parsed.get("topic", {}) or {}
+            state["writer_brief"] = parsed.get("writer_brief", {}) or {}
+            state["handoff_to_researcher"] = parsed.get("handoff_to_researcher", {}) or {}
         state["reference_articles"] = parsed.get("reference_articles", []) or []
         state["user_requirements"] = parsed.get("user_requirements", {}) or {}
         state["reference_index"] = parsed.get("reference_index", {}) or {}
         state["link_usage_policy"] = parsed.get("link_usage_policy", {}) or {}
         state["scout_process_summary"] = parsed.get("scout_process_summary", {}) or {}
+        state["search_execution_log"] = parsed.get("search_execution_log", {}) or {}
         state["current_stage"] = "scout"
         return
 

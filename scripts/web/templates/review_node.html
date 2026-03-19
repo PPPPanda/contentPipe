@@ -1039,6 +1039,9 @@ async function sendChat() {
         if (data.state_updated) {
             await refreshOutputCards();
             await refreshArticle();
+        } else if (nodeId === 'scout') {
+            // scout 聊天可能改了话题，即使 state_updated=false 也延迟刷新
+            setTimeout(() => refreshLeftColumn(), 500);
         } else if (nodeId === 'writer') {
             // writer 聊天经常改中后段，哪怕摘要比较没变也要强制刷新全文
             await refreshArticle();
