@@ -75,25 +75,88 @@ description: 通过 OpenClaw 浏览器插件操作 ChatGPT 进行 DALL-E 图片�
 2. `evaluate` 输入 prompt → 点击发送
 3. 等 15-30 秒 → `screenshot` 查看结果
 
-### 3. 📥 图片下载（已验证方案）
+### 3. 📥 图片下载（强化版：只下当前这轮的最终图）
 
-**流程**：浏览器 fetch → 导出 cookies → WSL curl 下载
+**核心原则：不要扫整页历史图片；只下载“最新一轮生成”的最终图。**
+
+常见误区：
+- 看到 `img[src*=estuary]` 就立刻下载 ❌
+- 全页 `querySelectorAll('article img')`，结果拿到旧图/历史图 ❌
+- 下载按钮还没出现就抓 URL ❌
+
+**只有满足以下 3 条，才允许下载：**
+1. 当前最新 assistant 图片块里已经出现 **`下载此图片`** 按钮
+2. 该块中的图片 `img.complete === true` 且 `naturalWidth >= 1024`
+3. 同一张图的 `currentSrc/src` 连续两次检查一致（间隔 3-5 秒）
+
+**流程**：定位最新图片块 → 等最终态 → 提取该块图片 URL → 导出 cookies → WSL curl 下载
 
 ```javascript
-// Step 1: 获取所有生成图片的 URL
-(async function(){ var imgs = document.querySelectorAll('article img[src*="estuary"]'); var urls = []; var seen = {}; for(var i=0;i<imgs.length;i++){var s=imgs[i].src; if(!seen[s]){seen[s]=true; urls.push(s)}} return JSON.stringify(urls)})()
+// Step 1: 只定位“最新一个带图片的 assistant 块”
+(() => {
+  const articles = Array.from(document.querySelectorAll('main article'));
+  const blocks = articles.map((article, idx) => {
+    const imgs = Array.from(article.querySelectorAll('img[src*="estuary"], img[src*="oaiusercontent"], img[src*="backend-api/estuary"]'));
+    const downloadBtns = Array.from(article.querySelectorAll('button')).filter(b => /下载此图片|download/i.test((b.getAttribute('aria-label')||'') + ' ' + (b.innerText||'')));
+    return {
+      idx,
+      imgCount: imgs.length,
+      downloadCount: downloadBtns.length,
+      imgs: imgs.map(img => ({
+        src: img.currentSrc || img.src || '',
+        complete: !!img.complete,
+        naturalWidth: img.naturalWidth || 0,
+        naturalHeight: img.naturalHeight || 0,
+      })),
+    };
+  }).filter(x => x.imgCount > 0);
+  return JSON.stringify(blocks[blocks.length - 1] || null);
+})()
 
-// Step 2: 获取 cookies
+// Step 2: 最终态检查（必须满足 downloadCount >= 1 / complete / naturalWidth>=1024）
+(() => {
+  const articles = Array.from(document.querySelectorAll('main article'));
+  const article = [...articles].reverse().find(a => a.querySelector('img[src*="estuary"], img[src*="oaiusercontent"], img[src*="backend-api/estuary"]'));
+  if (!article) return JSON.stringify({ok:false, reason:'no image article found'});
+  const imgs = Array.from(article.querySelectorAll('img[src*="estuary"], img[src*="oaiusercontent"], img[src*="backend-api/estuary"]'));
+  const downloadBtns = Array.from(article.querySelectorAll('button')).filter(b => /下载此图片|download/i.test((b.getAttribute('aria-label')||'') + ' ' + (b.innerText||'')));
+  const ready = imgs.length > 0 && downloadBtns.length >= 1 && imgs.every(img => img.complete && (img.naturalWidth || 0) >= 1024);
+  return JSON.stringify({
+    ok: ready,
+    imgCount: imgs.length,
+    downloadCount: downloadBtns.length,
+    imgs: imgs.map(img => ({src: img.currentSrc || img.src || '', w: img.naturalWidth || 0, h: img.naturalHeight || 0, complete: !!img.complete}))
+  });
+})()
+
+// Step 3: 若上一步 ok=true，再隔 3-5 秒重复一次，确认 src 稳定后取 URL 列表
+(() => {
+  const articles = Array.from(document.querySelectorAll('main article'));
+  const article = [...articles].reverse().find(a => a.querySelector('img[src*="estuary"], img[src*="oaiusercontent"], img[src*="backend-api/estuary"]'));
+  if (!article) return JSON.stringify([]);
+  const urls = Array.from(article.querySelectorAll('img[src*="estuary"], img[src*="oaiusercontent"], img[src*="backend-api/estuary"]'))
+    .map(img => img.currentSrc || img.src || '')
+    .filter(Boolean);
+  return JSON.stringify([...new Set(urls)]);
+})()
+
+// Step 4: 获取 cookies
 (function(){ return document.cookie })()
 ```
 
 ```bash
-# Step 3: WSL curl 下载
-curl -sS -o output.png \
+# Step 5: WSL curl 下载
+curl -L --fail -sS -o output.png \
   -H "Cookie: <cookies>" \
   "<image_url>" \
   -x http://172.27.112.1:7890  # 代理（如需要）
 ```
+
+**强制规则：**
+- 如果当前最新图片块没有 `下载此图片` 按钮 → 继续等，不要下载
+- 如果提取到的是“整页很多历史图” → 说明你选错作用域了，改成“最后一个带图 article”
+- 只下载当前这轮生成所在块中的图，不要下载历史对话中的图
+- 优先使用 `currentSrc`，不要只读 `src`
 
 **⚠️ 不要用这些方式下载**（均被 CSP 阻止）：
 - `<a download>` + data URL ❌
