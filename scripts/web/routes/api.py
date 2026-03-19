@@ -1001,6 +1001,10 @@ async def api_rollback_image_gen_to_director(run_id: str):
         raise HTTPException(status_code=404, detail="Run not found")
 
     run_dir = Path(__file__).parent.parent.parent.parent / "output" / "runs" / run_id
+
+    # 杀掉残留的 image agent 进程
+    _kill_image_agent_processes(run_id)
+
     raw["current_stage"] = "director"
     raw["status"] = "review"
     raw["_node_done"] = True
@@ -1025,6 +1029,40 @@ async def api_rollback_image_gen_to_director(run_id: str):
         "message": "Rolled back from image_gen to director review",
         "redirect_to": f"/runs/{run_id}/review?node=director",
     }
+
+
+def _kill_image_agent_processes(run_id: str):
+    """杀掉与指定 run 关联的 image agent 子进程。"""
+    import subprocess
+    try:
+        # 查找 contentpipe-img 相关的 openclaw agent 进程
+        result = subprocess.run(
+            ["pgrep", "-af", f"contentpipe-img.*{run_id[:20]}"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result.stdout.strip():
+            for line in result.stdout.strip().split("\n"):
+                pid = line.split()[0]
+                try:
+                    subprocess.run(["kill", pid], timeout=5)
+                    logger.info("Killed image agent process: pid=%s", pid)
+                except Exception:
+                    pass
+        # 也查找通用的 contentpipe-img session
+        result2 = subprocess.run(
+            ["pgrep", "-af", "contentpipe-img"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if result2.stdout.strip():
+            for line in result2.stdout.strip().split("\n"):
+                pid = line.split()[0]
+                try:
+                    subprocess.run(["kill", pid], timeout=5)
+                    logger.info("Killed stale image agent process: pid=%s", pid)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning("Failed to kill image agent processes: %s", e)
 
 
 # ── JSON API：reject / rollback（供 OpenClaw 工具调用）─────────
