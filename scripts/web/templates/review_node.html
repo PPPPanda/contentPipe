@@ -621,13 +621,14 @@
                 {% for img in run.generated_images | default([]) %}
                     {% if img.success | default(false) %}
                     {% set img_name = img.file_path.split('/')[-1] if img.file_path else img.placement_id %}
-                    {% set placement = {} %}
+                    {% set ns = namespace(placement={}) %}
                     {% if run.visual_plan is defined and run.visual_plan is mapping %}
                         {% for p in run.visual_plan.placements | default([]) %}
-                            {% if p.id == img.placement_id %}{% set placement = p %}{% endif %}
+                            {% if p.id == img.placement_id %}{% set ns.placement = p %}{% endif %}
                         {% endfor %}
                     {% endif %}
-                    <div class="bg-slate-800/50 rounded overflow-hidden relative group">
+                    {% set placement = ns.placement %}
+                    <div class="bg-slate-800/50 rounded overflow-hidden relative group border border-slate-700/50">
                         <img src="/api/runs/{{ run.run_id }}/images/{{ img_name }}"
                              alt="{{ img.placement_id }}"
                              class="w-full h-auto"
@@ -635,10 +636,22 @@
                         <div class="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                             <button onclick="replacePlacement('{{ img.placement_id }}')" class="text-xs text-white bg-sky-500/80 hover:bg-sky-500 px-2 py-1 rounded">🔄 替换</button>
                         </div>
-                        <div class="px-2 py-1">
-                            <p class="text-xs text-slate-400">{{ img.placement_id }} · {{ img.engine | default('?') }}</p>
+                        <div class="px-3 py-2 space-y-1">
+                            <p class="text-xs text-slate-300 font-medium">{{ img.placement_id }} · {{ img.engine | default('?') }}</p>
+                            {% if placement.type is defined %}
+                            <p class="text-xs text-sky-400/80">🧩 类型：{{ placement.type }}</p>
+                            {% endif %}
                             {% if placement.after_section is defined %}
-                            <p class="text-xs text-green-400/60">📍 {{ placement.after_section | replace('## ', '') }}</p>
+                            <p class="text-xs text-green-400/80">📍 插入章节：{{ placement.after_section | replace('## ', '') }}</p>
+                            {% endif %}
+                            {% if placement.after_paragraph is defined %}
+                            <p class="text-xs text-amber-400/80">📝 插入位置：该章节第 {{ placement.after_paragraph }} 段后</p>
+                            {% endif %}
+                            {% if placement.caption is defined and placement.caption %}
+                            <p class="text-xs text-slate-500">💬 图注：{{ placement.caption | truncate(80) }}</p>
+                            {% endif %}
+                            {% if placement.purpose is defined and placement.purpose %}
+                            <p class="text-xs text-slate-500">🎯 用途：{{ placement.purpose | truncate(100) }}</p>
                             {% endif %}
                         </div>
                     </div>
