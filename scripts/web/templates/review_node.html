@@ -148,11 +148,12 @@
                     {% set is_selected = (tid == node_output.get('selected_topic_id', '')) %}
                     {% set wb = topic.writer_brief | default({}) if topic.writer_brief is defined else {} %}
                     {% set ho = topic.handoff_to_researcher | default({}) if topic.handoff_to_researcher is defined else {} %}
-                    <div class="scout-topic-card rounded-lg transition-all duration-200
+                    <div class="scout-topic-card rounded-lg transition-all duration-200 cursor-pointer
                                 {{ 'border-2 border-green-500 bg-green-900/20' if is_selected else 'border border-slate-700 bg-slate-800/50 hover:border-sky-500/50 hover:bg-slate-800' }}"
-                         data-topic-id="{{ tid }}">
-                        {# 标题栏（可点击选择） #}
-                        <div class="p-4 cursor-pointer" onclick="selectScoutTopic('{{ tid }}')">
+                         data-topic-id="{{ tid }}"
+                         onclick="selectScoutTopic('{{ tid }}')">
+                        {# 标题栏 #}
+                        <div class="p-4 pb-2">
                             <div class="flex items-start justify-between gap-2 mb-2">
                                 <div class="flex items-center gap-2">
                                     <span class="text-xs font-bold {{ 'text-green-400' if is_selected else 'text-sky-400' }} bg-slate-700 px-2 py-0.5 rounded">
@@ -220,6 +221,13 @@
                                 {% for kw in topic.preferred_keywords | default([]) %}
                                 <span class="text-xs bg-slate-700/50 text-slate-400 px-1.5 py-0.5 rounded">{{ kw }}</span>
                                 {% endfor %}
+                            </div>
+                            {% endif %}
+
+                            {# 不完整话题提示 #}
+                            {% if not wb and not ho %}
+                            <div class="text-xs text-amber-400/70 bg-amber-900/20 rounded p-2">
+                                ⚠️ 此话题缺少详细写作规划和调研任务。选择后 Researcher 和 Writer 将基于标题和角度自行展开。
                             </div>
                             {% endif %}
 
