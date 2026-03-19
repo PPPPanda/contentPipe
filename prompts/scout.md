@@ -200,15 +200,39 @@ topics:
           source_type: "media"
           credibility_status: "unknown"
 
+  # ⚠️ T002/T003 只需轻量版（节省 token），选中后 pipeline 会要求补全
   - topic_id: T002
     rank: 2
     title: "话题标题（第二推荐）"
-    # ... 同上结构 ...
+    summary: "2-3句话概述"
+    heat_score: "高/中/低"
+    heat_evidence:
+      - "热度数据"
+    why_recommended:
+      - "推荐原因"
+    content_angle: "切入角度"
+    proposed_thesis: "核心论点"
+    target_output_shape: "分析型/观点型/攻略型/体验型"
+    required_keywords:
+      - "关键词"
+    preferred_keywords:
+      - "关键词"
+    # writer_brief 和 handoff_to_researcher 可省略，选中后由 pipeline 补全
 
   - topic_id: T003
     rank: 3
     title: "话题标题（第三推荐）"
-    # ... 同上结构 ...
+    summary: "2-3句话概述"
+    heat_score: "高/中/低"
+    heat_evidence:
+      - "热度数据"
+    why_recommended:
+      - "推荐原因"
+    content_angle: "切入角度"
+    proposed_thesis: "核心论点"
+    target_output_shape: "分析型/观点型/攻略型/体验型"
+    required_keywords:
+      - "关键词"
 
 # ── 用户选择后，selected_topic_id 由 pipeline 自动填入 ──
 selected_topic_id: ""              # 审核阶段由用户选择填入

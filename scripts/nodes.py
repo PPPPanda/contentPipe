@@ -374,7 +374,7 @@ def scout_node(state: ContentState) -> ContentState:
         output_filename="topic.yaml",
         output_kind="YAML briefing document",
         validator=validate_topic_yaml,
-        max_tokens=8192,
+        max_tokens=16384,  # Scout 输出 3 话题 YAML 较大
     )
 
     # ── v2 多话题 / v1 单话题 兼容 ──
