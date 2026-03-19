@@ -173,14 +173,16 @@ def get_node_output(run_id: str, node_id: str) -> dict:
             total = search_log.get("total_sources_scanned", sum(sc.get("results_count", 0) for sc in skills_called))
             search_summary = f"调用了 {len(skill_names)} 个搜索 skill，共扫描 {total} 条结果"
 
-        if scout_topics and len(scout_topics) > 1:
-            # v2 多话题模式
+        if scout_topics and len(scout_topics) >= 1:
+            # v2 多话题模式（含单话题时也用此视图以展示完整信息）
             return {
                 "_type": "scout_topics",
                 "topics": scout_topics,
                 "selected_topic_id": selected_topic_id or (scout_topics[0].get("topic_id", "") if scout_topics else ""),
                 "search_summary": search_summary,
                 "skills_called": skills_called,
+                "reference_articles": s.get("reference_articles", []),
+                "user_requirements": s.get("user_requirements", {}),
             }
 
         # v1 单话题 fallback
