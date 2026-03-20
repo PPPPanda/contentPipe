@@ -1452,6 +1452,11 @@ async def api_upload_image(run_id: str, request: Request):
                 old.unlink()
     else:
         filename = f"{placement_id}{suffix}"
+        # 清理旧配图文件（不同扩展名），避免 img_001.jpg / img_001.png 并存造成预览混淆
+        for ext in ALLOWED_IMAGE_EXTS:
+            old = images_dir / f"{placement_id}{ext}"
+            if old.exists():
+                old.unlink()
     filepath = images_dir / filename
     content = await image.read()
     if len(content) > MAX_UPLOAD_BYTES:
@@ -1470,7 +1475,6 @@ async def api_upload_image(run_id: str, request: Request):
             "option": None,
         })
         state["generated_images"] = generated
-        _save_state(state)
     elif purpose == "cover":
         state["generated_cover"] = {
             "success": True,
@@ -1480,7 +1484,23 @@ async def api_upload_image(run_id: str, request: Request):
             "generation_time_ms": 0,
             "error": "",
         }
-        _save_state(state)
+
+    _save_state(state)
+
+    # 如果当前在 formatter / publisher，替换图片后立刻重算 HTML，避免页面左栏和 iframe 预览不一致
+    rerendered = False
+    current_stage = state.get("current_stage", "")
+    if current_stage in {"formatter", "publisher"}:
+        try:
+            from formatter import format_article
+            from web.run_manager import OUTPUT_DIR as _OUTPUT_DIR
+            html = format_article(run_id, _OUTPUT_DIR / "runs" / run_id, state.get("platform", "wechat"))
+            state = _load_raw_state(run_id) or state
+            state["formatted_html"] = html
+            _save_state(state)
+            rerendered = True
+        except Exception as e:
+            logger.warning("upload image: formatter rerender failed for %s: %s", run_id, e)
 
     return {
         "ok": True,
@@ -1488,7 +1508,8 @@ async def api_upload_image(run_id: str, request: Request):
         "path": str(filepath),
         "placement_id": placement_id,
         "purpose": purpose,
-        "mime": content_type or f"image/{suffix.lstrip('.')}"
+        "mime": content_type or f"image/{suffix.lstrip('.')}",
+        "rerendered": rerendered,
     }
 
 
