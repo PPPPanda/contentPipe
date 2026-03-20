@@ -73,7 +73,7 @@ description: 通过 OpenClaw 浏览器插件操作 ChatGPT 进行 DALL-E 图片�
 **使用方法**：
 1. `navigate` 到 `/images`
 2. `evaluate` 输入 prompt → 点击发送
-3. 等 15-30 秒 → `screenshot` 查看结果
+3. 等 120秒 → `screenshot` 查看结果
 
 ### 3. 📥 图片下载（强化版：只下当前这轮的最终图）
 
@@ -84,60 +84,113 @@ description: 通过 OpenClaw 浏览器插件操作 ChatGPT 进行 DALL-E 图片�
 - 全页 `querySelectorAll('article img')`，结果拿到旧图/历史图 ❌
 - 下载按钮还没出现就抓 URL ❌
 
-**只有满足以下 3 条，才允许下载：**
+**只有满足以下 4 条，才允许下载：**
 1. 当前最新 assistant 图片块里已经出现 **`下载此图片`** 按钮
-2. 该块中的图片 `img.complete === true` 且 `naturalWidth >= 1024`
-3. 同一张图的 `currentSrc/src` 连续两次检查一致（间隔 3-5 秒）
+2. 选择的是**当前可见层**图片，不是同卡片里的隐藏层/过渡层/历史层
+3. 该图片 `img.complete === true` 且 `naturalWidth >= 1024`
+4. 同一张图的 `file_id/currentSrc` 连续两次检查一致（间隔 20 秒）
 
-**流程**：定位最新图片块 → 等最终态 → 提取该块图片 URL → 导出 cookies → WSL curl 下载
+**流程**：定位当前视口内最后一个可见前景图 → 等最终态 → 提取该图唯一 URL → 导出 cookies → WSL curl 下载
 
 ```javascript
-// Step 1: 只定位“最新一个带图片的 assistant 块”
+// Step 1: 只选“当前视口内最后一个可见前景图”
 (() => {
-  const articles = Array.from(document.querySelectorAll('main article'));
-  const blocks = articles.map((article, idx) => {
-    const imgs = Array.from(article.querySelectorAll('img[src*="estuary"], img[src*="oaiusercontent"], img[src*="backend-api/estuary"]'));
-    const downloadBtns = Array.from(article.querySelectorAll('button')).filter(b => /下载此图片|download/i.test((b.getAttribute('aria-label')||'') + ' ' + (b.innerText||'')));
+  const imgs = Array.from(document.querySelectorAll('img[src*="estuary"], img[src*="oaiusercontent"], img[src*="backend-api/estuary"]'));
+  const candidates = imgs.map((img, i) => {
+    const r = img.getBoundingClientRect();
+    const s = getComputedStyle(img);
+    const inViewport = r.bottom > 0 && r.top < window.innerHeight && r.width > 200 && r.height > 120;
+    const cx = Math.floor(Math.max(0, Math.min(window.innerWidth - 1, r.left + r.width / 2)));
+    const cy = Math.floor(Math.max(0, Math.min(window.innerHeight - 1, r.top + Math.min(r.height / 2, 120))));
+    const topEl = document.elementFromPoint(cx, cy);
+    const centerHit = !!topEl && (topEl === img || img.contains(topEl) || topEl.contains(img));
+    const src = img.currentSrc || img.src || '';
+    const m = src.match(/id=([^&]+)/);
     return {
-      idx,
-      imgCount: imgs.length,
-      downloadCount: downloadBtns.length,
-      imgs: imgs.map(img => ({
-        src: img.currentSrc || img.src || '',
-        complete: !!img.complete,
-        naturalWidth: img.naturalWidth || 0,
-        naturalHeight: img.naturalHeight || 0,
-      })),
+      i,
+      src,
+      file_id: m ? m[1] : null,
+      alt: img.alt || '',
+      complete: !!img.complete,
+      naturalWidth: img.naturalWidth || 0,
+      naturalHeight: img.naturalHeight || 0,
+      opacity: parseFloat(s.opacity || '1'),
+      zIndex: s.zIndex || 'auto',
+      className: (img.className || '').toString(),
+      inViewport,
+      centerHit,
+      top: r.top,
     };
-  }).filter(x => x.imgCount > 0);
-  return JSON.stringify(blocks[blocks.length - 1] || null);
+  }).filter(c => c.inViewport && c.complete && c.naturalWidth >= 1024 && c.opacity >= 0.5 && (c.centerHit || c.alt.includes('已生成图片') || c.zIndex === '1' || c.className.includes('z-1')));
+
+  const selected = candidates.sort((a,b) => a.top - b.top).slice(-1)[0] || null;
+  return JSON.stringify({ok: !!selected, selected, candidates});
 })()
 
-// Step 2: 最终态检查（必须满足 downloadCount >= 1 / complete / naturalWidth>=1024）
+// Step 2: 最终态检查（必须仍然是同一个可见前景图，并且页面已有下载按钮）
 (() => {
-  const articles = Array.from(document.querySelectorAll('main article'));
-  const article = [...articles].reverse().find(a => a.querySelector('img[src*="estuary"], img[src*="oaiusercontent"], img[src*="backend-api/estuary"]'));
-  if (!article) return JSON.stringify({ok:false, reason:'no image article found'});
-  const imgs = Array.from(article.querySelectorAll('img[src*="estuary"], img[src*="oaiusercontent"], img[src*="backend-api/estuary"]'));
-  const downloadBtns = Array.from(article.querySelectorAll('button')).filter(b => /下载此图片|download/i.test((b.getAttribute('aria-label')||'') + ' ' + (b.innerText||'')));
-  const ready = imgs.length > 0 && downloadBtns.length >= 1 && imgs.every(img => img.complete && (img.naturalWidth || 0) >= 1024);
-  return JSON.stringify({
-    ok: ready,
-    imgCount: imgs.length,
-    downloadCount: downloadBtns.length,
-    imgs: imgs.map(img => ({src: img.currentSrc || img.src || '', w: img.naturalWidth || 0, h: img.naturalHeight || 0, complete: !!img.complete}))
-  });
+  const hasDownload = Array.from(document.querySelectorAll('button')).some(b => /下载此图片|download/i.test((b.getAttribute('aria-label')||'') + ' ' + (b.innerText||'')));
+  const imgs = Array.from(document.querySelectorAll('img[src*="estuary"], img[src*="oaiusercontent"], img[src*="backend-api/estuary"]'));
+  const visible = imgs.map(img => {
+    const r = img.getBoundingClientRect();
+    const s = getComputedStyle(img);
+    const inViewport = r.bottom > 0 && r.top < window.innerHeight && r.width > 200 && r.height > 120;
+    const cx = Math.floor(Math.max(0, Math.min(window.innerWidth - 1, r.left + r.width / 2)));
+    const cy = Math.floor(Math.max(0, Math.min(window.innerHeight - 1, r.top + Math.min(r.height / 2, 120))));
+    const topEl = document.elementFromPoint(cx, cy);
+    const centerHit = !!topEl && (topEl === img || img.contains(topEl) || topEl.contains(img));
+    const src = img.currentSrc || img.src || '';
+    const m = src.match(/id=([^&]+)/);
+    return {
+      src, file_id: m ? m[1] : null,
+      complete: !!img.complete,
+      w: img.naturalWidth || 0,
+      h: img.naturalHeight || 0,
+      opacity: parseFloat(s.opacity || '1'),
+      zIndex: s.zIndex || 'auto',
+      alt: img.alt || '',
+      className: (img.className || '').toString(),
+      inViewport,
+      centerHit,
+      top: r.top,
+    };
+  }).filter(c => c.inViewport && c.complete && c.w >= 1024 && c.opacity >= 0.5 && (c.centerHit || c.alt.includes('已生成图片') || c.zIndex === '1' || c.className.includes('z-1')))
+    .sort((a,b) => a.top - b.top);
+
+  const selected = visible.slice(-1)[0] || null;
+  return JSON.stringify({ok: hasDownload && !!selected, download_button_seen: hasDownload, selected, visible});
 })()
 
-// Step 3: 若上一步 ok=true，再隔 3-5 秒重复一次，确认 src 稳定后取 URL 列表
+// Step 3: 若上一步 ok=true，再隔 20 秒重复一次，确认同一个 file_id/currentSrc 稳定后只取这 1 个 URL
 (() => {
-  const articles = Array.from(document.querySelectorAll('main article'));
-  const article = [...articles].reverse().find(a => a.querySelector('img[src*="estuary"], img[src*="oaiusercontent"], img[src*="backend-api/estuary"]'));
-  if (!article) return JSON.stringify([]);
-  const urls = Array.from(article.querySelectorAll('img[src*="estuary"], img[src*="oaiusercontent"], img[src*="backend-api/estuary"]'))
-    .map(img => img.currentSrc || img.src || '')
-    .filter(Boolean);
-  return JSON.stringify([...new Set(urls)]);
+  const imgs = Array.from(document.querySelectorAll('img[src*="estuary"], img[src*="oaiusercontent"], img[src*="backend-api/estuary"]'));
+  const visible = imgs.map(img => {
+    const r = img.getBoundingClientRect();
+    const s = getComputedStyle(img);
+    const inViewport = r.bottom > 0 && r.top < window.innerHeight && r.width > 200 && r.height > 120;
+    const cx = Math.floor(Math.max(0, Math.min(window.innerWidth - 1, r.left + r.width / 2)));
+    const cy = Math.floor(Math.max(0, Math.min(window.innerHeight - 1, r.top + Math.min(r.height / 2, 120))));
+    const topEl = document.elementFromPoint(cx, cy);
+    const centerHit = !!topEl && (topEl === img || img.contains(topEl) || topEl.contains(img));
+    const src = img.currentSrc || img.src || '';
+    const m = src.match(/id=([^&]+)/);
+    return {
+      src, file_id: m ? m[1] : null,
+      complete: !!img.complete,
+      w: img.naturalWidth || 0,
+      opacity: parseFloat(s.opacity || '1'),
+      zIndex: s.zIndex || 'auto',
+      alt: img.alt || '',
+      className: (img.className || '').toString(),
+      inViewport,
+      centerHit,
+      top: r.top,
+    };
+  }).filter(c => c.inViewport && c.complete && c.w >= 1024 && c.opacity >= 0.5 && (c.centerHit || c.alt.includes('已生成图片') || c.zIndex === '1' || c.className.includes('z-1')))
+    .sort((a,b) => a.top - b.top);
+
+  const chosen = visible.slice(-1)[0];
+  return JSON.stringify(chosen ? {ok:true, src: chosen.src, file_id: chosen.file_id} : {ok:false});
 })()
 
 // Step 4: 获取 cookies
