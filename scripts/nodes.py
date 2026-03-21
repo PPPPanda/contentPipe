@@ -657,17 +657,21 @@ def _build_writer_context(state: ContentState) -> dict:
 
     # ── 丰富层：分析角度 ──
     if insights:
-        ctx["promising_angles"] = [
-            {"insight": ins.get("insight_text", ""), "type": ins.get("insight_type", ""), "writer_usage": ins.get("writer_usage", "")}
-            for ins in insights
-        ]
+        insights_safe = [ins for ins in insights if isinstance(ins, dict)]
+        if insights_safe:
+            ctx["promising_angles"] = [
+                {"insight": ins.get("insight_text", ""), "type": ins.get("insight_type", ""), "writer_usage": ins.get("writer_usage", "")}
+                for ins in insights_safe
+            ]
 
     # ── 风险提示 ──
     if open_issues:
-        ctx["open_issues"] = [
-            {"description": oi.get("description", ""), "impact": oi.get("impact", "")}
-            for oi in open_issues
-        ]
+        issues_safe = [oi for oi in open_issues if isinstance(oi, dict)]
+        if issues_safe:
+            ctx["open_issues"] = [
+                {"description": oi.get("description", ""), "impact": oi.get("impact", "")}
+                for oi in issues_safe
+            ]
 
     return ctx
 
