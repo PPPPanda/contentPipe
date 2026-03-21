@@ -235,10 +235,11 @@ def get_node_output(run_id: str, node_id: str) -> dict:
         summary = ""
         # 尝试从 verification_results 生成摘要
         if vr:
-            verified = sum(1 for v in vr if v.get("status") == "verified")
-            conflicted = sum(1 for v in vr if v.get("status") == "conflicted")
-            insufficient = sum(1 for v in vr if v.get("status") == "insufficient_evidence")
-            summary = f"核查 {len(vr)} 条: ✅{verified} 已验证, ⚠️{conflicted} 有争议, ❓{insufficient} 证据不足"
+            vr_safe = [v for v in vr if isinstance(v, dict)]
+            verified = sum(1 for v in vr_safe if v.get("status") == "verified")
+            conflicted = sum(1 for v in vr_safe if v.get("status") == "conflicted")
+            insufficient = sum(1 for v in vr_safe if v.get("status") == "insufficient_evidence")
+            summary = f"核查 {len(vr_safe)} 条: ✅{verified} 已验证, ⚠️{conflicted} 有争议, ❓{insufficient} 证据不足"
 
         # 旧 schema fallback
         if not summary:
@@ -246,18 +247,22 @@ def get_node_output(run_id: str, node_id: str) -> dict:
 
         # safe_facts / forbidden
         safe = wp.get("safe_facts", [])
-        safe_text = "\n".join(f"✅ {f.get('item', f) if isinstance(f, dict) else f}" for f in safe[:5]) if safe else "—"
+        safe_safe = [f for f in safe if f is not None]
+        safe_text = "\n".join(f"✅ {f.get('item', f) if isinstance(f, dict) else f}" for f in safe_safe[:5]) if safe_safe else "—"
 
         forbidden = wp.get("forbidden_claims", [])
-        forbidden_text = "\n".join(f"🚫 {f}" for f in forbidden[:5]) if forbidden else "—"
+        forbidden_safe = [f for f in forbidden if f is not None]
+        forbidden_text = "\n".join(f"🚫 {f}" for f in forbidden_safe[:5]) if forbidden_safe else "—"
 
         # insights
         insights = s.get("evidence_backed_insights", [])
-        insight_text = "\n".join(f"💡 {i.get('insight_text', '')[:80]}" for i in insights[:3]) if insights else "—"
+        insights_safe = [i for i in insights if isinstance(i, dict)]
+        insight_text = "\n".join(f"💡 {i.get('insight_text', '')[:80]}" for i in insights_safe[:3]) if insights_safe else "—"
 
         # open issues
         issues = s.get("open_issues", r.get("open_issues", []))
-        issue_text = "\n".join(f"⚠️ {o.get('description', '')[:80]}" for o in issues[:3]) if issues else "—"
+        issues_safe = [o for o in issues if isinstance(o, dict)]
+        issue_text = "\n".join(f"⚠️ {o.get('description', '')[:80]}" for o in issues_safe[:3]) if issues_safe else "—"
 
         items = [
             {"label": "📋 核查摘要", "value": summary[:400]},
