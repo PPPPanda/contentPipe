@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+import signal
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -51,6 +52,27 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _pid_is_live(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8", errors="ignore")
+        for line in status.splitlines():
+            if line.startswith("State:"):
+                return "Z" not in line
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except Exception:
+            return False
 
 
 class LLMBrowserEngine(ImageEngine):
@@ -100,6 +122,8 @@ class LLMBrowserEngine(ImageEngine):
             "agent_task_path": audit_dir / f"{stem}.agent.txt",
             "stdout_path": audit_dir / f"{stem}.stdout.log",
             "stderr_path": audit_dir / f"{stem}.stderr.log",
+            "selection_json_path": audit_dir / f"{stem}.selection.json",
+            "proc_json_path": audit_dir / f"{stem}.proc.json",
             "prompt_sha256": _sha256_text(prompt),
             "requested_width": width,
             "requested_height": height,
@@ -116,6 +140,53 @@ class LLMBrowserEngine(ImageEngine):
     def _write_text(self, path: Path, text: str) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text or "", encoding="utf-8")
+
+    def _write_proc_record(self, audit: dict, **payload) -> None:
+        path = audit.get("proc_json_path")
+        if not path:
+            return
+        path.parent.mkdir(parents=True, exist_ok=True)
+        current = {}
+        try:
+            if path.exists():
+                current = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            current = {}
+        current.update(payload)
+        path.write_text(json.dumps(current, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _terminate_process_group(self, pid: int | None, *, audit: dict | None = None, reason: str = "") -> None:
+        if not pid:
+            return
+        try:
+            pgid = os.getpgid(pid)
+        except Exception:
+            pgid = None
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                if pgid is not None:
+                    os.killpg(pgid, sig)
+                else:
+                    os.kill(pid, sig)
+            except ProcessLookupError:
+                break
+            except Exception:
+                pass
+            time.sleep(0.8)
+            if not _pid_is_live(pid):
+                break
+        if audit:
+            self._append_trace(audit, "process_group_killed", pid=pid, pgid=pgid, reason=reason)
+            self._write_proc_record(audit, pid=pid, pgid=pgid, status="killed", kill_reason=reason, ended_at=_now_iso())
+
+    @staticmethod
+    def _read_json_file(path: Path) -> dict | None:
+        try:
+            if path.exists():
+                return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        return None
 
     def _extract_agent_audit(self, text: str) -> dict | None:
         raw = text or ""
@@ -142,6 +213,125 @@ class LLMBrowserEngine(ImageEngine):
             for v in obj:
                 blobs.extend(self._collect_text_blobs(v))
         return blobs
+
+    @staticmethod
+    def _parse_cli_json(output: str) -> dict:
+        raw = (output or "").strip()
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw)
+        except Exception:
+            pass
+        json_start = -1
+        for i, ch in enumerate(raw):
+            if ch in ("{", "["):
+                json_start = i
+                break
+        if json_start >= 0:
+            try:
+                return json.loads(raw[json_start:])
+            except Exception:
+                pass
+        return {"raw": raw}
+
+    def _browser_cli(self, args: list[str], timeout: int = 30, retries: int = 0, retry_delay: float = 2.0) -> dict:
+        cmd = ["openclaw", "browser", *args, "--json", "--browser-profile", "chrome"]
+        last_error = ""
+        attempts = max(1, retries + 1)
+        for attempt in range(1, attempts + 1):
+            try:
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+                parsed = self._parse_cli_json(result.stdout)
+                if result.returncode == 0:
+                    return parsed
+                last_error = (result.stderr or "").strip() or f"browser cli failed: {' '.join(args)}"
+                if parsed and not parsed.get("error"):
+                    return parsed
+            except subprocess.TimeoutExpired:
+                last_error = f"browser cli timeout after {timeout}s: {' '.join(args)}"
+            except Exception as e:
+                last_error = str(e)
+            if attempt < attempts:
+                time.sleep(retry_delay)
+        raise RuntimeError(last_error or f"browser cli failed: {' '.join(args)}")
+
+    def _find_browser_target(self, conversation_url: str | None = None) -> str | None:
+        tabs_result = self._browser_cli(["tabs"], timeout=20, retries=2, retry_delay=2.0)
+        tabs = tabs_result.get("tabs", []) if isinstance(tabs_result, dict) else []
+        if conversation_url:
+            for tab in tabs:
+                if tab.get("url") == conversation_url:
+                    return tab.get("targetId")
+        for tab in tabs:
+            if "chatgpt.com/" in (tab.get("url") or ""):
+                return tab.get("targetId")
+        return None
+
+    def _verify_download_matches_browser(self, output_path: Path, selection: dict, audit: dict | None = None) -> dict:
+        selection_url = selection.get("selected_image_current_src") or selection.get("selected_image_url")
+        selected_file_id = selection.get("selected_image_file_id")
+        conversation_url = selection.get("conversation_url") or selection.get("page_url") or ""
+        if not selection_url or not selected_file_id:
+            return {"ok": False, "reason": "selection proof missing selected_image_current_src or selected_image_file_id"}
+
+        target_id = self._find_browser_target(conversation_url)
+        if not target_id:
+            return {"ok": False, "reason": "unable to find browser target for conversation"}
+
+        safe_url = json.dumps(selection_url)
+        safe_file_id = json.dumps(selected_file_id)
+        fn = f"""(() => (async () => {{
+  const selectedUrl = {safe_url};
+  const selectedFileId = {safe_file_id};
+  const imgs = Array.from(document.querySelectorAll('img[src*=\"estuary\"], img[src*=\"oaiusercontent\"], img[src*=\"backend-api/estuary\"]'));
+  const uniqueFileIds = [...new Set(imgs.map(img => {{
+    const src = img.currentSrc || img.src || '';
+    const m = src.match(/id=([^&]+)/);
+    return m ? m[1] : null;
+  }}).filter(Boolean))];
+  const inDom = uniqueFileIds.includes(selectedFileId);
+  const r = await fetch(selectedUrl, {{ credentials: 'include' }});
+  const buf = await r.arrayBuffer();
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  const sha256 = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2,'0')).join('');
+  return JSON.stringify({{
+    ok: true,
+    inDom,
+    uniqueFileIds,
+    byteLength: buf.byteLength,
+    status: r.status,
+    contentType: r.headers.get('content-type'),
+    sha256
+  }});
+}})())()"""
+        eval_result = self._browser_cli(
+            ["evaluate", "--target-id", target_id, "--fn", fn],
+            timeout=120,
+            retries=2,
+            retry_delay=3.0,
+        )
+        raw = eval_result.get("result") or eval_result.get("raw") or eval_result.get("value")
+        if not raw:
+            return {"ok": False, "reason": "browser evaluate returned no result"}
+        try:
+            browser_check = json.loads(raw)
+        except Exception as e:
+            return {"ok": False, "reason": f"failed to parse browser verify result: {e}"}
+
+        local_sha = _sha256_file(output_path)
+        browser_check["local_sha256"] = local_sha
+        browser_check["selected_file_id"] = selected_file_id
+        browser_check["selected_image_current_src"] = selection_url
+        browser_check["conversation_url"] = conversation_url
+        browser_check["ok"] = bool(browser_check.get("inDom")) and browser_check.get("sha256") == local_sha
+        if audit:
+            self._append_trace(audit, "browser_verify", **{k: v for k, v in browser_check.items() if k != "selected_image_current_src"})
+        if not browser_check.get("inDom"):
+            browser_check["reason"] = "selected file_id not present in current DOM"
+        elif browser_check.get("sha256") != local_sha:
+            browser_check["reason"] = "browser fetched bytes do not match local file"
+        return browser_check
 
     def _finalize_audit(self, audit: dict, *, session_id: str, status: str,
                         task: str, spawn_result: dict | None, output_path: Path,
@@ -202,6 +392,8 @@ class LLMBrowserEngine(ImageEngine):
                 "stdout_path": str(audit.get("stdout_path")),
                 "stderr_path": str(audit.get("stderr_path")),
                 "trace_path": str(audit.get("trace_jsonl_path")),
+                "selection_json_path": str(audit.get("selection_json_path")),
+                "proc_json_path": str(audit.get("proc_json_path")),
             },
         }
         (audit["audit_json_path"]).write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -228,7 +420,7 @@ class LLMBrowserEngine(ImageEngine):
         ratio_hint = self._get_ratio_hint(width, height)
 
         # 构建 LLM 任务指令
-        task = self._build_task(prompt, ratio_hint, width, height, str(output_path))
+        task = self._build_task(prompt, ratio_hint, width, height, str(output_path), str(audit["selection_json_path"]))
         self._write_text(audit["agent_task_path"], task)
         self._append_trace(audit, "agent_task_written", path=str(audit["agent_task_path"]))
 
@@ -236,12 +428,15 @@ class LLMBrowserEngine(ImageEngine):
                      self.site, output_path.name, width, height)
 
         spawn_result = None
+        cancel_check = kwargs.get("cancel_check")
         try:
             # 通过 openclaw CLI 启动 session
-            spawn_result = self._spawn_session(task)
+            spawn_result = self._spawn_session(task, audit=audit, cancel_check=cancel_check)
 
             if spawn_result is None:
                 raise RuntimeError("LLM session spawn failed or timed out")
+            if (spawn_result or {}).get("status") == "cancelled":
+                raise RuntimeError((spawn_result or {}).get("cancel_reason") or "generation cancelled")
 
             self._write_text(audit["stdout_path"], (spawn_result or {}).get("stdout", "") or "")
             self._write_text(audit["stderr_path"], (spawn_result or {}).get("stderr", "") or "")
@@ -255,9 +450,30 @@ class LLMBrowserEngine(ImageEngine):
 
             # 等待文件落盘（agent 的 browser/exec 操作可能异步完成）
             elapsed = int((time.time() - start) * 1000)
-            check = self._wait_for_file(output_path, width, height, max_wait=120, audit=audit)
+            check = self._wait_for_file(
+                output_path,
+                width,
+                height,
+                max_wait=120,
+                audit=audit,
+                cancel_check=cancel_check,
+                spawn_result=spawn_result,
+            )
 
             if check["ok"]:
+                selection = self._read_json_file(audit["selection_json_path"])
+                if not selection:
+                    raise RuntimeError(f"selection proof not found: {audit['selection_json_path']}")
+
+                verify = self._verify_download_matches_browser(output_path, selection, audit=audit)
+                check["selection"] = {
+                    "selected_image_file_id": selection.get("selected_image_file_id"),
+                    "conversation_url": selection.get("conversation_url") or selection.get("page_url"),
+                }
+                check["browser_verify"] = {k: v for k, v in verify.items() if k != "selected_image_current_src"}
+                if not verify.get("ok"):
+                    raise RuntimeError(f"browser verification failed: {verify.get('reason', 'unknown reason')}")
+
                 logger.info("llm_browser[%s]: success, file=%s size=%d",
                             self.site, output_path.name, check["size"])
                 self._finalize_audit(
@@ -285,6 +501,7 @@ class LLMBrowserEngine(ImageEngine):
                         "session_id": (spawn_result or {}).get("session_id", ""),
                         "audit_path": str(audit["audit_json_path"]),
                         "trace_path": str(audit["trace_jsonl_path"]),
+                        "selection_json_path": str(audit["selection_json_path"]),
                     },
                 )
             else:
@@ -339,6 +556,7 @@ class LLMBrowserEngine(ImageEngine):
         width: int,
         height: int,
         output_path: str,
+        selection_json_path: str,
     ) -> str:
         """构建给 LLM 的任务指令"""
         return f"""使用 contentpipe-chatgpt-browser 技能，在 ChatGPT 上生成一张图片并下载到本地。
@@ -361,6 +579,30 @@ Image size: {ratio_hint}, {width}x{height} pixels
 ```
 {output_path}
 ```
+
+6. **必须把你最终选中的图片证据写入下面这个本地 JSON 文件**（这是内部校验用，允许写完整带 sig 的 URL）：
+
+```
+{selection_json_path}
+```
+
+证据文件必须是合法 JSON，且至少包含：
+
+```json
+{{
+  "page_url": "当前页面 URL",
+  "conversation_url": "当前对话 URL",
+  "selection_strategy": "你实际使用的选择策略",
+  "selected_image_file_id": "file_xxx",
+  "selected_image_current_src": "完整 currentSrc，必须包含 sig 参数",
+  "selected_image_natural_width": 1536,
+  "selected_image_natural_height": 1024,
+  "selected_image_alt": "图片 alt（如有）",
+  "download_button_seen": true
+}}
+```
+
+必须使用 write 工具把这个 JSON 写到**准确路径**，不能只在回复里口头说明。
 
 ## 下载方法（参考 SKILL.md）
 
@@ -401,15 +643,8 @@ AUDIT_JSON:
 - **不要输出完整带 sig 的图片 URL**
 - 只输出可审计但不泄密的信息"""
 
-    def _spawn_session(self, task: str) -> dict | None:
-        """通过 openclaw agent CLI 启动 LLM agent turn。
-
-        使用 `openclaw agent` 命令，指定 agent id 和消息。
-        Agent 拥有完整的 tool use 能力（browser、exec 等），
-        会根据 chatgpt-browser skill 自主操控浏览器。
-
-        每次调用创建独立 session（通过唯一 session-id）。
-        """
+    def _spawn_session(self, task: str, *, audit: dict | None = None, cancel_check=None) -> dict | None:
+        """通过 openclaw agent CLI 启动 LLM agent turn。"""
         session_id = f"contentpipe-img-{int(time.time())}"
         cmd = [
             "openclaw", "agent",
@@ -420,22 +655,81 @@ AUDIT_JSON:
             "--json",
         ]
 
-        logger.info("llm_browser: running agent turn (session=%s, timeout=%ds)",
-                     session_id, self.timeout)
+        logger.info("llm_browser: running agent turn (session=%s, timeout=%ds)", session_id, self.timeout)
+        deadline = time.time() + self.timeout + 60
+        proc = None
+        stdout = ""
+        stderr = ""
+        pid = None
+        pgid = None
 
         try:
-            result = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=self.timeout + 60,  # CLI 超时比 agent 超时多 60s
                 cwd=str(Path.home()),
+                start_new_session=True,
             )
+            pid = proc.pid
+            try:
+                pgid = os.getpgid(pid)
+            except Exception:
+                pgid = None
+            if audit:
+                self._append_trace(audit, "agent_turn_spawned", session_id=session_id, pid=pid, pgid=pgid)
+                self._write_proc_record(audit, session_id=session_id, pid=pid, pgid=pgid, status="running", started_at=_now_iso())
 
-            stdout = result.stdout.strip() if result.stdout else ""
-            stderr = result.stderr.strip() if result.stderr else ""
+            while True:
+                if cancel_check:
+                    cancel_reason = cancel_check()
+                    if cancel_reason:
+                        logger.info("llm_browser: cancelling agent turn (session=%s): %s", session_id, cancel_reason)
+                        self._terminate_process_group(pid, audit=audit, reason=cancel_reason)
+                        try:
+                            stdout, stderr = proc.communicate(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            stdout, stderr = "", ""
+                        return {
+                            "status": "cancelled",
+                            "session_id": session_id,
+                            "returncode": proc.returncode,
+                            "stdout": (stdout or "").strip(),
+                            "stderr": (stderr or "").strip(),
+                            "parsed": None,
+                            "pid": pid,
+                            "pgid": pgid,
+                            "cancel_reason": cancel_reason,
+                        }
 
-            # 过滤 CLI 噪音（[plugins]、🦞 等行）
+                remaining = max(0.5, min(2.0, deadline - time.time()))
+                if time.time() >= deadline:
+                    logger.warning("llm_browser: agent turn timed out after %ds (session=%s)", self.timeout + 60, session_id)
+                    self._terminate_process_group(pid, audit=audit, reason="timeout")
+                    try:
+                        stdout, stderr = proc.communicate(timeout=5)
+                    except subprocess.TimeoutExpired:
+                        stdout, stderr = "", ""
+                    return {
+                        "status": "timeout",
+                        "session_id": session_id,
+                        "returncode": proc.returncode,
+                        "stdout": (stdout or "").strip(),
+                        "stderr": (stderr or "").strip(),
+                        "parsed": None,
+                        "pid": pid,
+                        "pgid": pgid,
+                    }
+
+                try:
+                    stdout, stderr = proc.communicate(timeout=remaining)
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+
+            stdout = stdout.strip() if stdout else ""
+            stderr = stderr.strip() if stderr else ""
             stdout_lines = [
                 line for line in stdout.split("\n")
                 if not any(line.startswith(p) for p in [
@@ -444,51 +738,37 @@ AUDIT_JSON:
                 ])
             ]
             clean_stdout = "\n".join(stdout_lines).strip()
-
-            if result.returncode == 0:
-                logger.info("llm_browser: agent turn completed (session=%s)", session_id)
+            parsed = None
+            try:
+                parsed = json.loads(clean_stdout)
+            except (json.JSONDecodeError, ValueError):
                 parsed = None
-                try:
-                    parsed = json.loads(clean_stdout)
-                except (json.JSONDecodeError, ValueError):
-                    parsed = None
-                return {
-                    "status": "completed",
-                    "session_id": session_id,
-                    "returncode": result.returncode,
-                    "stdout": clean_stdout,
-                    "stderr": stderr,
-                    "parsed": parsed,
-                }
+
+            status = "completed" if proc.returncode == 0 else "error"
+            if proc.returncode == 0:
+                logger.info("llm_browser: agent turn completed (session=%s)", session_id)
             else:
-                logger.warning("llm_browser: agent turn failed (rc=%d, session=%s): %s",
-                               result.returncode, session_id, stderr[:300])
-                # 即使 CLI 返回非零，图片可能已下载成功
-                return {
-                    "status": "error",
-                    "session_id": session_id,
-                    "returncode": result.returncode,
-                    "stdout": clean_stdout,
-                    "stderr": stderr,
-                    "parsed": None,
-                }
+                logger.warning("llm_browser: agent turn failed (rc=%s, session=%s): %s", proc.returncode, session_id, stderr[:300])
 
-        except subprocess.TimeoutExpired as e:
-            logger.warning("llm_browser: agent turn timed out after %ds (session=%s)",
-                           self.timeout + 60, session_id)
-            # 超时但图片可能已经下载了
-            stdout = (e.stdout or "") if isinstance(e.stdout, str) else ""
-            stderr = (e.stderr or "") if isinstance(e.stderr, str) else ""
+            if audit:
+                self._write_proc_record(audit, session_id=session_id, pid=pid, pgid=pgid, status=status, returncode=proc.returncode, ended_at=_now_iso())
+
             return {
-                "status": "timeout",
+                "status": status,
                 "session_id": session_id,
-                "returncode": None,
-                "stdout": stdout,
+                "returncode": proc.returncode,
+                "stdout": clean_stdout,
                 "stderr": stderr,
-                "parsed": None,
+                "parsed": parsed,
+                "pid": pid,
+                "pgid": pgid,
             }
+        except Exception:
+            if proc and proc.poll() is None:
+                self._terminate_process_group(pid, audit=audit, reason="spawn_exception")
+            raise
 
-    def _wait_for_file(self, output_path: Path, width: int, height: int, max_wait: int = 120, audit: dict | None = None) -> dict:
+    def _wait_for_file(self, output_path: Path, width: int, height: int, max_wait: int = 120, audit: dict | None = None, cancel_check=None, spawn_result: dict | None = None) -> dict:
         """等待文件出现并通过检查。
 
         Agent turn 返回后，浏览器/exec 操作可能仍在异步执行（DALL-E 生成 + curl 下载）。
@@ -509,6 +789,11 @@ AUDIT_JSON:
         poll_interval = 5  # 每 5 秒检查一次
         waited = 0
         while waited < max_wait:
+            if cancel_check:
+                cancel_reason = cancel_check()
+                if cancel_reason:
+                    self._terminate_process_group((spawn_result or {}).get("pid"), audit=audit, reason=cancel_reason)
+                    return {"ok": False, "reason": f"cancelled: {cancel_reason}"}
             _time.sleep(poll_interval)
             waited += poll_interval
             check = self._check_result(output_path, width, height)

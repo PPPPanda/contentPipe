@@ -132,6 +132,36 @@ def call_llm(
         raise ValueError(f"Unknown provider: {provider}")
 
 
+def build_gateway_openai_compat_target(
+    requested_model: str,
+    gateway_agent_id: str | None = None,
+) -> tuple[str, dict[str, str]]:
+    """将旧的 provider/model 调用转换为新 Gateway agent-first 协议。"""
+    requested_model = (requested_model or "").strip()
+    extra_headers: dict[str, str] = {}
+
+    if gateway_agent_id:
+        extra_headers["X-OpenClaw-Agent-Id"] = gateway_agent_id
+
+    lowered = requested_model.lower()
+    is_agent_target = (
+        lowered == "openclaw"
+        or lowered == "openclaw/default"
+        or lowered.startswith("openclaw/")
+        or lowered.startswith("openclaw:")
+        or lowered.startswith("agent:")
+    )
+
+    if is_agent_target:
+        compat_model = requested_model
+    else:
+        compat_model = f"openclaw/{gateway_agent_id}" if gateway_agent_id else "openclaw/default"
+        if requested_model:
+            extra_headers["X-OpenClaw-Model"] = requested_model
+
+    return compat_model, extra_headers
+
+
 def _call_via_gateway(
     model: str,
     prompt: str,
@@ -146,11 +176,10 @@ def _call_via_gateway(
     timeout_seconds: int = 1800,
 ) -> str:
     """通过 OpenClaw Gateway 调用 LLM。"""
-    extra_headers = {}
+    compat_model, compat_headers = build_gateway_openai_compat_target(model, gateway_agent_id)
+    extra_headers = dict(compat_headers)
     if gateway_session_key:
         extra_headers["X-OpenClaw-Session-Key"] = gateway_session_key
-    if gateway_agent_id:
-        extra_headers["X-OpenClaw-Agent-Id"] = gateway_agent_id
     headers = build_gateway_headers(extra_headers or None)
 
     messages = []
@@ -162,7 +191,7 @@ def _call_via_gateway(
     messages.append({"role": "user", "content": prompt})
 
     body: dict[str, Any] = {
-        "model": model,
+        "model": compat_model,
         "messages": messages,
         "temperature": temperature,
         "max_tokens": max_tokens,

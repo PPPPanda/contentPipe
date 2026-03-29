@@ -45,6 +45,25 @@ def _node_session_key(state: ContentState, node_id: str, lane: str = "main") -> 
     return build_contentpipe_node_session_key(state["run_id"], node_id, lane, generation)
 
 
+def _load_persisted_state(run_id: str) -> ContentState | None:
+    path = OUTPUT_DIR / "runs" / run_id / "state.yaml"
+    if not path.exists():
+        return None
+    raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return raw if raw else None
+
+
+def _get_run_interrupt_reason(run_id: str, expected_stage: str | None = None) -> tuple[ContentState | None, str | None]:
+    latest = _load_persisted_state(run_id)
+    if not latest:
+        return None, None
+    if latest.get("status") == "cancelled":
+        return latest, "run cancelled"
+    if expected_stage and latest.get("current_stage") != expected_stage:
+        return latest, f"stage changed to {latest.get('current_stage')}"
+    return latest, None
+
+
 def _strip_code_fence(text: str) -> str:
     """去掉 LLM 返回的 ```yaml ... ``` 或 ```json ... ``` 包裹"""
     text = text.strip()
@@ -389,10 +408,13 @@ def scout_node(state: ContentState) -> ContentState:
             chosen = next((t for t in topics_list if t.get("topic_id") == selected_id), None)
         if not chosen:
             chosen = topics_list[0]  # 默认第 1 个（rank=1）
+            selected_id = chosen.get("topic_id", "")
+        parsed["selected_topic_id"] = selected_id
         topic = chosen
         writer_brief = chosen.get("writer_brief", {})
         handoff = chosen.get("handoff_to_researcher", {})
         state["scout_topics"] = topics_list  # 保存全部候选供审核页展示
+        state["selected_topic_id"] = selected_id
     elif topic:
         # v1 兼容
         writer_brief = parsed.get("writer_brief", {})
@@ -445,8 +467,8 @@ def scout_node(state: ContentState) -> ContentState:
     }
 
     state["current_stage"] = "scout"
-    # 保存完整 Scout YAML（含所有字段）
-    _save_artifact(state["run_id"], "topic.yaml", topic_yaml or yaml.dump(parsed, allow_unicode=True, default_flow_style=False))
+    # 保存完整 Scout YAML（含所有字段 + 规范化后的 selected_topic_id）
+    _save_artifact(state["run_id"], "topic.yaml", yaml.dump(parsed, allow_unicode=True, default_flow_style=False, sort_keys=False))
     _save_artifact(state["run_id"], "scout_raw.txt", result)
     _save_state(state)
     return state
@@ -926,6 +948,11 @@ def image_gen_node(state: ContentState) -> ContentState:
     run_id = state["run_id"]
     img_dir = OUTPUT_DIR / "runs" / run_id / "images"
     img_dir.mkdir(parents=True, exist_ok=True)
+    latest_state, interrupt_reason = _get_run_interrupt_reason(run_id, "image_gen")
+    if interrupt_reason:
+        logger.info("image_gen: interrupted before start (%s)", interrupt_reason)
+        return latest_state or state
+    cancel_check = lambda: _get_run_interrupt_reason(run_id, "image_gen")[1]
 
     existing_generated = {}
     for img in state.get("generated_images", []) or []:
@@ -985,6 +1012,10 @@ def image_gen_node(state: ContentState) -> ContentState:
             generated_cover = {"success": False, "error": str(e)[:200], "file_path": "", "engine": "user_provided", "prompt_used": "", "generation_time_ms": 0}
             logger.warning("cover: download failed (%s), falling back to generation", e)
     if (not generated_cover or not generated_cover.get("success")) and isinstance(cover, dict) and cover.get("description"):
+        latest_state, interrupt_reason = _get_run_interrupt_reason(run_id, "image_gen")
+        if interrupt_reason:
+            logger.info("image_gen: interrupted before cover generation (%s)", interrupt_reason)
+            return latest_state or state
         cover_path = img_dir / "cover.jpg"
         cover_aspect = cover.get("aspect_ratio", "2.35:1")
         cover_width, cover_height = aspect_map.get(cover_aspect, (1410, 600))
@@ -996,13 +1027,21 @@ def image_gen_node(state: ContentState) -> ContentState:
             ] if part
         )
         logger.info("cover: generating (%s chars)...", len(cover_prompt))
-        cover_result = engine.generate(
-            prompt=cover_prompt,
-            width=cover_width,
-            height=cover_height,
-            seed=20260311,
-            output_path=cover_path,
-        )
+        try:
+            cover_result = engine.generate(
+                prompt=cover_prompt,
+                width=cover_width,
+                height=cover_height,
+                seed=20260311,
+                output_path=cover_path,
+                cancel_check=cancel_check,
+            )
+        except Exception:
+            latest_state, interrupt_reason = _get_run_interrupt_reason(run_id, "image_gen")
+            if interrupt_reason:
+                logger.info("image_gen: interrupted during cover generation (%s)", interrupt_reason)
+                return latest_state or state
+            raise
         generated_cover = {
             "file_path": str(cover_result.file_path) if cover_result.success else "",
             "engine": cover_result.engine,
@@ -1017,6 +1056,10 @@ def image_gen_node(state: ContentState) -> ContentState:
             logger.error("cover failed: %s", cover_result.error)
 
     for i, placement in enumerate(placements):
+        latest_state, interrupt_reason = _get_run_interrupt_reason(run_id, "image_gen")
+        if interrupt_reason:
+            logger.info("image_gen: interrupted before placement loop item (%s)", interrupt_reason)
+            return latest_state or state
         pid = placement.get("id", f"img_{i+1:03d}")
         desc = placement.get("description", "")
         purpose = placement.get("purpose", "")
@@ -1053,13 +1096,21 @@ def image_gen_node(state: ContentState) -> ContentState:
         prompt_text = f"{desc}. {purpose}" if purpose else desc
         logger.info("%s: generating (%s chars)...", pid, len(prompt_text))
 
-        result = engine.generate(
-            prompt=prompt_text,
-            width=width,
-            height=height,
-            seed=42 + i,
-            output_path=file_path,
-        )
+        try:
+            result = engine.generate(
+                prompt=prompt_text,
+                width=width,
+                height=height,
+                seed=42 + i,
+                output_path=file_path,
+                cancel_check=cancel_check,
+            )
+        except Exception:
+            latest_state, interrupt_reason = _get_run_interrupt_reason(run_id, "image_gen")
+            if interrupt_reason:
+                logger.info("image_gen: interrupted during %s generation (%s)", pid, interrupt_reason)
+                return latest_state or state
+            raise
 
         generated.append({
             "placement_id": pid,
@@ -1075,6 +1126,11 @@ def image_gen_node(state: ContentState) -> ContentState:
             logger.info("%s done (%sms)", pid, result.generation_time_ms)
         else:
             logger.error("%s failed: %s", pid, result.error)
+
+    latest_state, interrupt_reason = _get_run_interrupt_reason(run_id, "image_gen")
+    if interrupt_reason:
+        logger.info("image_gen: interrupted before final save (%s)", interrupt_reason)
+        return latest_state or state
 
     state["generated_images"] = generated
     state["generated_cover"] = generated_cover

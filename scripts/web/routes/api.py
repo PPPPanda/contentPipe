@@ -11,7 +11,9 @@ import ipaddress
 import json
 import os
 import re
+import signal
 import subprocess
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -44,6 +46,101 @@ def _node_session_key(state: dict, run_id: str, node_id: str, lane: str = "main"
     return _nsk(state, node_id, lane)
 
 
+def _bump_session_generations(raw: dict, *nodes: str) -> None:
+    session_gen = raw.get("_session_gen") if isinstance(raw.get("_session_gen"), dict) else {}
+    for node_id in nodes:
+        if not node_id:
+            continue
+        session_gen[node_id] = int(session_gen.get(node_id, 0) or 0) + 1
+    raw["_session_gen"] = session_gen
+
+
+def _image_sessions_dir(run_id: str) -> Path:
+    return Path(__file__).parent.parent.parent.parent / "output" / "runs" / run_id / "image_sessions"
+
+
+def _iter_image_agent_records(run_id: str) -> list[tuple[Path, dict]]:
+    records: list[tuple[Path, dict]] = []
+    base = _image_sessions_dir(run_id)
+    if not base.exists():
+        return records
+    for path in sorted(base.glob("*.proc.json")):
+        try:
+            records.append((path, json.loads(path.read_text(encoding="utf-8"))))
+        except Exception:
+            continue
+    return records
+
+
+def _pid_is_live(pid: int | None) -> bool:
+    if not pid:
+        return False
+    try:
+        status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8", errors="ignore")
+        for line in status.splitlines():
+            if line.startswith("State:"):
+                return "Z" not in line
+        return True
+    except FileNotFoundError:
+        return False
+    except Exception:
+        try:
+            os.kill(pid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+        except Exception:
+            return False
+
+
+def _kill_process_group(pid: int | None, pgid: int | None = None) -> bool:
+    if not pid:
+        return False
+    alive = False
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_text(encoding="utf-8", errors="ignore").replace("\x00", " ")
+        if cmdline and "openclaw" not in cmdline and "contentpipe" not in cmdline:
+            logger.warning("skip killing pid=%s because cmdline looks unrelated: %s", pid, cmdline[:120])
+            return False
+    except Exception:
+        pass
+    try:
+        if pgid is None:
+            pgid = os.getpgid(pid)
+    except Exception:
+        pgid = None
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            if pgid is not None:
+                os.killpg(pgid, sig)
+            else:
+                os.kill(pid, sig)
+        except ProcessLookupError:
+            return True
+        except Exception:
+            pass
+        try:
+            import time as _time
+            _time.sleep(0.8)
+            alive = _pid_is_live(pid)
+            if not alive:
+                return True
+        except Exception:
+            return False
+    return not alive
+
+
+def _read_proc_record(path: Path) -> dict:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def _write_proc_record(path: Path, data: dict) -> None:
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _read_prompt_text(name: str) -> str:
     prompts_dir = Path(__file__).parent.parent.parent.parent / "prompts"
     path = prompts_dir / name
@@ -70,6 +167,51 @@ def _node_official_artifact_path(run_id: str, node_id: str) -> Path | None:
     return mapping.get(node_id)
 
 
+def _sync_scout_topic_yaml_selected_topic(run_id: str, topic_id: str) -> dict:
+    import yaml as _yaml
+
+    artifact_path = _node_official_artifact_path(run_id, "scout")
+    if not artifact_path or not artifact_path.exists():
+        raise FileNotFoundError(f"topic.yaml not found for run {run_id}")
+    parsed = _yaml.safe_load(artifact_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(parsed, dict):
+        raise ValueError("topic.yaml top-level must be a mapping")
+    topics_list = parsed.get("topics", []) or []
+    valid_ids = [t.get("topic_id") for t in topics_list if isinstance(t, dict)]
+    if valid_ids and topic_id not in valid_ids:
+        raise ValueError(f"selected_topic_id {topic_id} not found in topic.yaml topics")
+    parsed["selected_topic_id"] = topic_id
+    artifact_path.write_text(_yaml.dump(parsed, allow_unicode=True, default_flow_style=False, sort_keys=False), encoding="utf-8")
+    return parsed
+
+
+def _normalize_scout_selection_in_state(state: dict, parsed: dict) -> None:
+    topics_list = parsed.get("topics", []) or []
+    if not topics_list or not isinstance(topics_list, list):
+        return
+    artifact_selected_id = parsed.get("selected_topic_id", "")
+    state_selected_id = state.get("selected_topic_id", "")
+    valid_ids = [t.get("topic_id") for t in topics_list if isinstance(t, dict)]
+    sel_id = artifact_selected_id if artifact_selected_id in valid_ids else state_selected_id
+    if sel_id not in valid_ids:
+        sel_id = valid_ids[0] if valid_ids else ""
+    state["selected_topic_id"] = sel_id
+    chosen = next((t for t in topics_list if t.get("topic_id") == sel_id), topics_list[0] if topics_list else {})
+    state["topic"] = chosen
+    state["writer_brief"] = chosen.get("writer_brief", {}) or {}
+    state["handoff_to_researcher"] = chosen.get("handoff_to_researcher", {}) or {}
+    ur = parsed.get("user_requirements", {}) or {}
+    if chosen.get("required_keywords"):
+        ur["required_keywords"] = chosen.get("required_keywords", [])
+    elif "required_keywords" in ur:
+        ur.pop("required_keywords", None)
+    if chosen.get("preferred_keywords"):
+        ur["preferred_keywords"] = chosen.get("preferred_keywords", [])
+    elif "preferred_keywords" in ur:
+        ur.pop("preferred_keywords", None)
+    state["user_requirements"] = ur
+
+
 def _apply_artifact_to_state_minimally(state: dict, node_id: str, artifact_text: str) -> None:
     import yaml as _yaml
 
@@ -81,24 +223,17 @@ def _apply_artifact_to_state_minimally(state: dict, node_id: str, artifact_text:
         topics_list = parsed.get("topics", [])
         if topics_list and isinstance(topics_list, list):
             state["scout_topics"] = topics_list
-            # 重新选中：保留当前 selected_topic_id，若已无效则选第一个
-            sel_id = state.get("selected_topic_id", "")
-            valid_ids = [t.get("topic_id") for t in topics_list]
-            if sel_id not in valid_ids:
-                sel_id = valid_ids[0] if valid_ids else ""
-                state["selected_topic_id"] = sel_id
-            # 用选中的话题更新顶级字段
-            chosen = next((t for t in topics_list if t.get("topic_id") == sel_id), topics_list[0] if topics_list else {})
-            state["topic"] = chosen
-            state["writer_brief"] = chosen.get("writer_brief", {}) or {}
-            state["handoff_to_researcher"] = chosen.get("handoff_to_researcher", {}) or {}
+            _normalize_scout_selection_in_state(state, parsed)
         else:
             # v1 兼容
             state["topic"] = parsed.get("topic", {}) or {}
             state["writer_brief"] = parsed.get("writer_brief", {}) or {}
             state["handoff_to_researcher"] = parsed.get("handoff_to_researcher", {}) or {}
         state["reference_articles"] = parsed.get("reference_articles", []) or []
-        state["user_requirements"] = parsed.get("user_requirements", {}) or {}
+        if "user_requirements" not in state:
+            state["user_requirements"] = {}
+        if not (topics_list and isinstance(topics_list, list)):
+            state["user_requirements"] = parsed.get("user_requirements", {}) or {}
         state["reference_index"] = parsed.get("reference_index", {}) or {}
         state["link_usage_policy"] = parsed.get("link_usage_policy", {}) or {}
         state["scout_process_summary"] = parsed.get("scout_process_summary", {}) or {}
@@ -466,10 +601,16 @@ async def api_start_run(run_id: str, background_tasks: BackgroundTasks):
 
 @router.post("/runs/{run_id}/cancel")
 async def api_cancel_run(run_id: str):
-    """取消 Run"""
-    run = update_run_state(run_id, {"status": "cancelled"})
-    if not run:
+    """取消 Run，并尽力终止 image_gen 残留进程。"""
+    raw = _load_raw_state(run_id)
+    if not raw:
         raise HTTPException(status_code=404, detail="Run not found")
+    _kill_image_agent_processes(run_id)
+    _bump_session_generations(raw, "image_gen", "director")
+    raw["status"] = "cancelled"
+    raw["_node_done"] = True
+    raw["review_action"] = ""
+    _save_state(raw)
     return {"ok": True}
 
 
@@ -632,7 +773,8 @@ async def api_select_topic(request: Request, run_id: str):
     if not chosen:
         raise HTTPException(status_code=404, detail=f"Topic {topic_id} not found in scout_topics")
 
-    # 更新 state：选中的话题写入 topic / writer_brief / handoff
+    # 更新 state：选中的话题写入 topic / writer_brief / handoff，并同步回正式 topic.yaml
+    _sync_scout_topic_yaml_selected_topic(run_id, topic_id)
     raw["selected_topic_id"] = topic_id
     raw["topic"] = chosen
     raw["writer_brief"] = chosen.get("writer_brief", {})
@@ -682,6 +824,15 @@ async def api_submit_review(request: Request, run_id: str, background_tasks: Bac
         raise HTTPException(status_code=404, detail="Run not found")
 
     if action == "approve":
+        if raw.get("current_stage") == "scout":
+            scout_topics = raw.get("scout_topics", []) or []
+            valid_ids = [t.get("topic_id") for t in scout_topics if isinstance(t, dict)]
+            selected_id = raw.get("selected_topic_id", "")
+            if selected_id not in valid_ids:
+                selected_id = valid_ids[0] if valid_ids else ""
+            if selected_id:
+                parsed = _sync_scout_topic_yaml_selected_topic(run_id, selected_id)
+                _normalize_scout_selection_in_state(raw, parsed)
         raw["review_action"] = "approve"
         raw["user_feedback"] = {}
     elif action == "revise":
@@ -923,11 +1074,11 @@ def _rollback_to_review_node(raw: dict, run_id: str, node_id: str) -> tuple[dict
     if chat_file.exists():
         chat_file.unlink()
 
-    session_gen = raw.get("_session_gen") if isinstance(raw.get("_session_gen"), dict) else {}
-    session_gen[node_id] = int(session_gen.get(node_id, 0) or 0) + 1
+    _bump_session_generations(raw, node_id)
     if node_id == "writer":
-        session_gen["de_ai_editor"] = int(session_gen.get("de_ai_editor", 0) or 0) + 1
-    raw["_session_gen"] = session_gen
+        _bump_session_generations(raw, "de_ai_editor")
+    if prev_node == "director":
+        _bump_session_generations(raw, "director", "image_gen")
 
     state_cleanup = {
         "scout": ["topic", "writer_brief", "handoff_to_researcher", "reference_articles", "user_requirements", "reference_index", "link_usage_policy", "scout_process_summary"],
@@ -948,7 +1099,9 @@ def _rollback_to_review_node(raw: dict, run_id: str, node_id: str) -> tuple[dict
         raw.pop(key, None)
 
     if node_id == "director":
+        _kill_image_agent_processes(run_id)
         raw.pop("generated_images", None)
+        raw.pop("generated_cover", None)
         images_dir = run_dir / "images"
         if images_dir.exists():
             import shutil
@@ -1002,8 +1155,9 @@ async def api_rollback_image_gen_to_director(run_id: str):
 
     run_dir = Path(__file__).parent.parent.parent.parent / "output" / "runs" / run_id
 
-    # 杀掉残留的 image agent 进程
+    # 杀掉残留的 image agent 进程，并切到新的 director/image_gen session generation
     _kill_image_agent_processes(run_id)
+    _bump_session_generations(raw, "director", "image_gen")
 
     raw["current_stage"] = "director"
     raw["status"] = "review"
@@ -1032,37 +1186,36 @@ async def api_rollback_image_gen_to_director(run_id: str):
 
 
 def _kill_image_agent_processes(run_id: str):
-    """杀掉与指定 run 关联的 image agent 子进程。"""
-    import subprocess
+    """杀掉与指定 run 关联的 image agent 子进程。优先按记录下来的真实 pid/pgid 清理。"""
+    killed = 0
+    for path, record in _iter_image_agent_records(run_id):
+        pid = record.get("pid")
+        pgid = record.get("pgid")
+        if _kill_process_group(pid, pgid):
+            killed += 1
+            record["status"] = "killed"
+            record["killed_at"] = record.get("killed_at") or datetime.now().isoformat()
+            _write_proc_record(path, record)
+            logger.info("Killed image agent process from record: pid=%s pgid=%s file=%s", pid, pgid, path.name)
+
+    # legacy fallback：兼容旧 run（还没有 *.proc.json 记录）
     try:
-        # 查找 contentpipe-img 相关的 openclaw agent 进程
-        result = subprocess.run(
-            ["pgrep", "-af", f"contentpipe-img.*{run_id[:20]}"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result.stdout.strip():
+        for pattern in (f"contentpipe-img.*{run_id[:20]}", "contentpipe-img"):
+            result = subprocess.run(["pgrep", "-af", pattern], capture_output=True, text=True, timeout=5)
+            if not result.stdout.strip():
+                continue
             for line in result.stdout.strip().split("\n"):
-                pid = line.split()[0]
-                try:
-                    subprocess.run(["kill", pid], timeout=5)
-                    logger.info("Killed image agent process: pid=%s", pid)
-                except Exception:
-                    pass
-        # 也查找通用的 contentpipe-img session
-        result2 = subprocess.run(
-            ["pgrep", "-af", "contentpipe-img"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if result2.stdout.strip():
-            for line in result2.stdout.strip().split("\n"):
-                pid = line.split()[0]
-                try:
-                    subprocess.run(["kill", pid], timeout=5)
-                    logger.info("Killed stale image agent process: pid=%s", pid)
-                except Exception:
-                    pass
+                parts = line.split()
+                if not parts:
+                    continue
+                pid = int(parts[0])
+                if _kill_process_group(pid):
+                    killed += 1
+                    logger.info("Killed legacy image agent process: pid=%s pattern=%s", pid, pattern)
     except Exception as e:
         logger.warning("Failed to kill image agent processes: %s", e)
+
+    return killed
 
 
 # ── JSON API：reject / rollback（供 OpenClaw 工具调用）─────────
@@ -1712,6 +1865,7 @@ def _is_probably_local_gateway(gateway_url: str) -> bool:
 async def _run_setup_preflight(gateway_url: str) -> dict[str, Any]:
     import httpx
     from gateway_auth import build_gateway_headers
+    from tools import build_gateway_openai_compat_target
 
     checks: list[dict[str, Any]] = []
     agent_id = _setup_preflight_agent_id()
@@ -1749,18 +1903,19 @@ async def _run_setup_preflight(gateway_url: str) -> dict[str, Any]:
         route_detail = "未找到可用模型，无法做路由探测"
     else:
         try:
+            compat_model, compat_headers = build_gateway_openai_compat_target(probe_model, agent_id)
             async with httpx.AsyncClient(timeout=20) as client:
                 resp = await client.post(
                     f"{gateway_url}/v1/chat/completions",
-                    headers=build_gateway_headers({"X-OpenClaw-Agent-Id": agent_id}),
+                    headers=build_gateway_headers(compat_headers),
                     json={
-                        "model": probe_model,
+                        "model": compat_model,
                         "messages": [{"role": "user", "content": "Reply with exactly: OK"}],
                         "max_tokens": 8,
                     },
                 )
                 route_ok = resp.status_code == 200
-                route_detail = f"HTTP {resp.status_code} · model={probe_model}"
+                route_detail = f"HTTP {resp.status_code} · model={compat_model} · override={probe_model}"
                 if not route_ok:
                     route_detail = f"{route_detail} · {(resp.text or '')[:160]}"
         except Exception as e:
@@ -2278,6 +2433,21 @@ async def _execute_pipeline(run_id: str):
                     None, node_fn, state
                 )
                 duration_ms = int((time.time() - t0) * 1000)
+
+                if state.get("status") == "cancelled":
+                    logger.info("pipeline: run %s cancelled while node %s was executing", run_id, node_id)
+                    _save_state(state)
+                    return
+                if state.get("current_stage") != node_id:
+                    logger.info(
+                        "pipeline: stop advancing after %s because state moved to %s (status=%s)",
+                        node_id,
+                        state.get("current_stage"),
+                        state.get("status"),
+                    )
+                    _save_state(state)
+                    return
+
                 summary = ""
                 if node_id == "scout":
                     summary = state.get("topic", {}).get("title", "")[:40]
