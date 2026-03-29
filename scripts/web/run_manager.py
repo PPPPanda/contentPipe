@@ -479,36 +479,23 @@ def get_dashboard_stats() -> dict:
 
 
 def load_settings() -> dict:
-    config_path = CONFIG_DIR / "pipeline.yaml"
-    if config_path.exists():
-        return yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-    return {}
+    """加载设置页使用的配置视图：base pipeline.yaml + local pipeline.local.yaml（merged）。"""
+    base_path = CONFIG_DIR / "pipeline.yaml"
+    config = yaml.safe_load(base_path.read_text(encoding="utf-8")) if base_path.exists() else {}
+    local_path = CONFIG_DIR / "pipeline.local.yaml"
+    if local_path.exists():
+        local = yaml.safe_load(local_path.read_text(encoding="utf-8")) or {}
+        config = _deep_merge_copy(config or {}, local)
+    return config or {}
 
 
 def save_settings(settings: dict) -> None:
-    config_path = CONFIG_DIR / "pipeline.yaml"
-    # 使用 ruamel.yaml 保留注释和格式；fallback 到 PyYAML
-    try:
-        from ruamel.yaml import YAML as RYAML
-        ry = RYAML()
-        ry.preserve_quotes = True
-        if config_path.exists():
-            existing = ry.load(config_path.read_text(encoding="utf-8"))
-            if existing is None:
-                existing = {}
-            _deep_merge(existing, settings)
-            target = existing
-        else:
-            target = settings
-        import io
-        stream = io.StringIO()
-        ry.dump(target, stream)
-        config_path.write_text(stream.getvalue(), encoding="utf-8")
-    except ImportError:
-        config_path.write_text(
-            yaml.dump(settings, allow_unicode=True, default_flow_style=False),
-            encoding="utf-8",
-        )
+    """设置页保存统一写入 pipeline.local.yaml，避免覆盖带注释的 base config。"""
+    local_path = CONFIG_DIR / "pipeline.local.yaml"
+    local_path.write_text(
+        yaml.dump(settings, allow_unicode=True, default_flow_style=False, sort_keys=False),
+        encoding="utf-8",
+    )
 
 
 def _deep_merge(base: dict, override: dict) -> None:
@@ -518,6 +505,16 @@ def _deep_merge(base: dict, override: dict) -> None:
             _deep_merge(base[k], v)
         else:
             base[k] = v
+
+
+def _deep_merge_copy(base: dict, override: dict) -> dict:
+    result = dict(base or {})
+    for k, v in (override or {}).items():
+        if k in result and isinstance(result[k], dict) and isinstance(v, dict):
+            result[k] = _deep_merge_copy(result[k], v)
+        else:
+            result[k] = v
+    return result
 
 
 # ── 内部函数 ──────────────────────────────────────────────────
