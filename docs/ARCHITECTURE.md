@@ -38,7 +38,7 @@
 ├─────────────────────────────────────────────────────────┤
 │                    LLM Gateway                           │
 │  OpenClaw Gateway (localhost:18789)                      │
-│  provider models + explicit blank-agent routing          │
+│  agent-first model contract + explicit blank-agent 路由   │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -46,7 +46,8 @@
 
 为降低 OpenClaw 常规 agent 提示词/工作区污染，Gateway 模式下新增一条显式执行平面：
 
-- ContentPipe 通过 `x-openclaw-agent-id: contentpipe-blank` 路由到空白 agent
+- ContentPipe 通过 OpenAI-compatible `model: openclaw/contentpipe-blank` 路由到空白 agent
+- 若节点声明具体底层模型（如 `dashscope/qwen3.5-plus`），则通过 `x-openclaw-model` 传递 backend model override
 - 同时保留独立 `x-openclaw-session-key`，保证每个 run / node 的上下文隔离
 - blank-agent 的职责是承载节点的**正式产物修改**（初始执行 + 后续审核追问）
 - 节点收到命令后先自行执行任务并尝试修改自己的正式产物文件
@@ -99,7 +100,8 @@ output/runs/{run_id}/
 典型 Gateway 路由键：
 
 ```text
-x-openclaw-agent-id: contentpipe-blank
+model: openclaw/contentpipe-blank
+x-openclaw-model: dashscope/qwen3.5-plus
 x-openclaw-session-key: contentpipe:{run_id}:{node_id}:main
 ```
 

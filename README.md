@@ -279,6 +279,10 @@ your-openclaw-workspace/
 
 ContentPipe 通过 Gateway 的 `/v1/chat/completions` 端点调用 LLM。如果你的 Gateway 是默认配置，**这个端点可能没有启用**。
 
+> 新版 Gateway（2026.3.24+）采用 **agent-first model contract**：
+> - 请求体 `model` 应传 `openclaw/<agentId>` 或 `openclaw/default`
+> - 具体 provider/model（如 `dashscope/qwen3.5-plus`）应放在 `x-openclaw-model` header
+
 检查方法：
 ```bash
 curl -s -o /dev/null -w "%{http_code}" http://localhost:18789/v1/chat/completions
