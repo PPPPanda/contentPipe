@@ -15,6 +15,8 @@ import signal
 import subprocess
 from datetime import datetime
 from pathlib import Path
+
+import yaml
 from typing import Any
 from urllib.parse import urlparse
 
@@ -24,6 +26,7 @@ from fastapi.templating import Jinja2Templates
 
 from cli_utils import parse_cli_json
 from logutil import get_logger
+from validators import validate_topic_yaml
 
 from web.run_manager import (
     list_runs, get_run, create_run, update_run_state, delete_run,
@@ -212,6 +215,87 @@ def _normalize_scout_selection_in_state(state: dict, parsed: dict) -> None:
     state["user_requirements"] = ur
 
 
+def _deep_merge_patch(base: Any, patch: Any) -> Any:
+    if isinstance(base, dict) and isinstance(patch, dict):
+        result = dict(base)
+        for k, v in patch.items():
+            result[k] = _deep_merge_patch(result.get(k), v) if k in result else v
+        return result
+    return patch
+
+
+def _parse_llm_json_object(text: str) -> dict:
+    parsed = parse_cli_json(text)
+    if not isinstance(parsed, dict):
+        raise ValueError("LLM structured output must be a JSON object")
+    return parsed
+
+
+def _apply_scout_structured_patch(run_id: str, before_text: str, patch_obj: dict) -> tuple[str, dict, bool]:
+    validation = validate_topic_yaml(before_text)
+    if not validation.ok or not isinstance(validation.parsed, dict):
+        raise ValueError("Current topic.yaml is invalid, cannot apply structured patch")
+
+    parsed = validation.parsed
+    changed = False
+
+    topics = parsed.get("topics", []) or []
+    topic_index = {
+        t.get("topic_id"): idx
+        for idx, t in enumerate(topics)
+        if isinstance(t, dict) and t.get("topic_id")
+    }
+
+    selected_topic_id = str(patch_obj.get("selected_topic_id", "") or "").strip()
+    if selected_topic_id:
+        if selected_topic_id not in topic_index:
+            raise ValueError(f"selected_topic_id not found in topics: {selected_topic_id}")
+        if parsed.get("selected_topic_id", "") != selected_topic_id:
+            parsed["selected_topic_id"] = selected_topic_id
+            changed = True
+
+    topic_updates = patch_obj.get("topic_updates", {}) or {}
+    if topic_updates and not isinstance(topic_updates, dict):
+        raise ValueError("topic_updates must be an object keyed by topic_id")
+    for topic_id, topic_patch in topic_updates.items():
+        if topic_id not in topic_index:
+            raise ValueError(f"unknown topic_id in topic_updates: {topic_id}")
+        if not isinstance(topic_patch, dict):
+            raise ValueError(f"topic_updates.{topic_id} must be an object")
+        idx = topic_index[topic_id]
+        merged = _deep_merge_patch(parsed["topics"][idx], topic_patch)
+        if merged != parsed["topics"][idx]:
+            parsed["topics"][idx] = merged
+            changed = True
+
+    allowed_top_level = {
+        "reference_articles",
+        "user_requirements",
+        "reference_index",
+        "link_usage_policy",
+        "scout_process_summary",
+        "search_execution_log",
+    }
+    top_level_updates = patch_obj.get("top_level_updates", {}) or {}
+    if top_level_updates and not isinstance(top_level_updates, dict):
+        raise ValueError("top_level_updates must be an object")
+    for key, value in top_level_updates.items():
+        if key not in allowed_top_level:
+            raise ValueError(f"unsupported top-level scout patch field: {key}")
+        merged = _deep_merge_patch(parsed.get(key), value)
+        if merged != parsed.get(key):
+            parsed[key] = merged
+            changed = True
+
+    normalized_text = yaml.dump(parsed, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    final_validation = validate_topic_yaml(normalized_text)
+    if not final_validation.ok:
+        details = "; ".join(final_validation.details[:8])
+        raise ValueError(f"topic.yaml patch validation failed: {final_validation.message} | {details}")
+
+    return final_validation.normalized_text, final_validation.parsed, changed
+
+
 def _apply_artifact_to_state_minimally(state: dict, node_id: str, artifact_text: str) -> None:
     import yaml as _yaml
 
@@ -266,6 +350,121 @@ def _apply_artifact_to_state_minimally(state: dict, node_id: str, artifact_text:
         state["formatted_html"] = artifact_text
         state["current_stage"] = "formatter"
         return
+
+
+async def _handle_scout_review_chat(run_id: str, state: dict, user_msg: str, gateway_agent_id: str | None) -> tuple[str, bool]:
+    from tools import call_llm
+    from web.run_manager import get_chat_history, save_chat_message, _save_state
+    from nodes import _get_model, _save_artifact
+
+    artifact_path = _node_official_artifact_path(run_id, "scout")
+    if not artifact_path:
+        raise ValueError("scout has no official artifact path")
+
+    before_text = artifact_path.read_text(encoding="utf-8") if artifact_path.exists() else ""
+    validation = validate_topic_yaml(before_text)
+    if not validation.ok or not isinstance(validation.parsed, dict):
+        raise ValueError(f"Current topic.yaml is invalid: {validation.message}")
+    current_payload = validation.parsed
+
+    system_prompt = _build_node_chat_prompt("scout", state) + """
+
+## 结构化修改协议（必须遵守）
+- 不要直接 edit/write topic.yaml
+- 你必须输出一个 JSON object，让 Python 来应用最小 patch
+- 只在用户明确要求修改时设置 apply_patch=true；纯讨论时设置 apply_patch=false
+- `topic_updates` 里只放需要修改的最小字段，不要重复整份 topic
+- 如需切换用户选中的话题，设置 `selected_topic_id`
+- 允许修改的顶层字段仅限：reference_articles、user_requirements、reference_index、link_usage_policy、scout_process_summary、search_execution_log
+- 严禁输出 markdown 代码块，严禁输出 YAML
+
+JSON schema:
+{
+  "reply": "给用户看的中文回复",
+  "apply_patch": true,
+  "selected_topic_id": "T003",
+  "topic_updates": {
+    "T003": {
+      "writer_brief": { ... },
+      "handoff_to_researcher": { ... }
+    }
+  },
+  "top_level_updates": {}
+}
+"""
+
+    current_payload_block = json.dumps(current_payload, ensure_ascii=False, indent=2)[:20000]
+    user_input = f"""## 当前 scout 正式产物（JSON 视图）
+{current_payload_block}
+
+## 用户本轮消息
+{user_msg}
+
+请只输出 JSON object。"""
+
+    full_history = get_chat_history(run_id, "scout")
+    recent = [{"role": m["role"], "content": m["content"]} for m in full_history[-20:]]
+    chat_model = _get_model("scout") or "dashscope/qwen3.5-plus"
+
+    loop = asyncio.get_event_loop()
+    last_error = ""
+    last_reply = ""
+    for attempt in range(1, 4):
+        prompt_input = user_input if attempt == 1 else f"""前一轮结构化 patch 没被 Python 接受，请只修正 JSON patch。
+
+失败原因：{last_error}
+
+## 当前 scout 正式产物（JSON 视图）
+{current_payload_block}
+
+## 用户本轮消息
+{user_msg}
+
+请重新输出完整 JSON object。"""
+        raw_output = await loop.run_in_executor(
+            None,
+            lambda: call_llm(
+                system_prompt,
+                prompt_input,
+                model=chat_model,
+                response_format="json",
+                chat_history=recent,
+                gateway_session_key=_node_session_key(state, run_id, "scout", "main"),
+                gateway_agent_id=gateway_agent_id,
+            )
+        )
+        save_chat_message(run_id, "scout", "assistant", raw_output, tag=f"scout_patch_raw_attempt_{attempt}", internal=True)
+        try:
+            patch_obj = _parse_llm_json_object(raw_output)
+            reply_visible = str(patch_obj.get("reply", "") or "我按你的要求检查并处理了这轮 scout 产物。").strip()
+            last_reply = reply_visible
+            apply_patch = bool(patch_obj.get("apply_patch"))
+            if not apply_patch:
+                save_chat_message(run_id, "scout", "assistant", reply_visible, tag="user_chat")
+                return reply_visible, False
+
+            after_text, parsed_after, changed = _apply_scout_structured_patch(run_id, before_text, patch_obj)
+            if not changed:
+                save_chat_message(run_id, "scout", "assistant", reply_visible, tag="user_chat")
+                return reply_visible, False
+
+            if before_text:
+                _save_artifact(run_id, f"{artifact_path.name}.prev", before_text)
+            artifact_path.write_text(after_text, encoding="utf-8")
+            _apply_artifact_to_state_minimally(state, "scout", after_text)
+            _save_state(state)
+            _save_artifact(run_id, "scout_review_patch_last.json", json.dumps(patch_obj, ensure_ascii=False, indent=2))
+            logger.info("Scout structured patch accepted for run %s (attempt %s)", run_id, attempt)
+            save_chat_message(run_id, "scout", "assistant", reply_visible, tag="user_chat")
+            return reply_visible, True
+        except Exception as e:
+            last_error = str(e)
+            logger.warning("Scout structured patch rejected for run %s attempt %s: %s", run_id, attempt, e)
+            continue
+
+    repaired_reply = (last_reply + f"\n\n（本轮结构化 patch 未被系统接受：{last_error[:240]}）").strip() if last_reply else f"[AI 回复失败: {last_error[:100]}]"
+    save_chat_message(run_id, "scout", "assistant", repaired_reply, tag="user_chat")
+    return repaired_reply, False
 
 
 async def _handle_artifact_review_chat(run_id: str, state: dict, node_id: str, user_msg: str, gateway_agent_id: str | None) -> tuple[str, bool]:
@@ -1005,8 +1204,26 @@ async def api_chat(request: Request, run_id: str):
             "change_summary": change_summary,
         }
 
-    # 结构化/预览节点：同 session 直接改正式产物，Python 读回后提交
-    if node_id in {"scout", "researcher", "director", "formatter"}:
+    # Scout：结构化 patch + Python 校验/重试
+    if node_id == "scout":
+        try:
+            ai_reply, state_updated = await _handle_scout_review_chat(
+                run_id,
+                raw,
+                user_msg,
+                gateway_agent_id,
+            )
+        except Exception as e:
+            ai_reply = f"[AI 回复失败: {str(e)[:100]}]"
+            state_updated = False
+        return {
+            "role": "assistant",
+            "content": ai_reply,
+            "state_updated": state_updated,
+        }
+
+    # 其他结构化/预览节点：同 session 直接改正式产物，Python 读回后提交
+    if node_id in {"researcher", "director", "formatter"}:
         try:
             ai_reply, state_updated = await _handle_artifact_review_chat(
                 run_id,

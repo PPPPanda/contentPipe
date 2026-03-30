@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 from fastapi import APIRouter, HTTPException, Request
 
+from tools import get_effective_role_models, load_pipeline_config
 from web.env_utils import detect_public_ip, is_env_configured, masked_if_configured
 
 router = APIRouter()
@@ -22,14 +23,8 @@ PROMPTS_DIR = Path(__file__).parent.parent.parent.parent / "prompts"
 
 
 def _load_config() -> dict:
-    """加载 pipeline.yaml + pipeline.local.yaml（合并）"""
-    base_path = CONFIG_DIR / "pipeline.yaml"
-    base = yaml.safe_load(base_path.read_text(encoding="utf-8")) if base_path.exists() else {}
-    local_path = CONFIG_DIR / "pipeline.local.yaml"
-    if local_path.exists():
-        local = yaml.safe_load(local_path.read_text(encoding="utf-8")) or {}
-        base = _deep_merge(base or {}, local)
-    return base or {}
+    """统一走 tools.load_pipeline_config()，避免和运行时模型解析分叉。"""
+    return load_pipeline_config() or {}
 
 
 def _save_local_config(config: dict) -> None:
@@ -139,15 +134,7 @@ async def api_patch_config(request: Request):
 async def api_get_models():
     """列出各角色当前使用的模型"""
     config = _load_config()
-    pipeline = config.get("pipeline", {})
-    default = pipeline.get("default_llm", "")
-    overrides = pipeline.get("llm_overrides", {})
-
-    roles = ["scout", "researcher", "writer", "de_ai_editor", "director", "director_refine"]
-    models = {}
-    for role in roles:
-        models[role] = overrides.get(role, "") or default or "(未配置)"
-
+    default, models, overrides = get_effective_role_models(config=config)
     return {
         "default_llm": default,
         "roles": models,

@@ -24,7 +24,7 @@ import yaml
 from gateway_auth import build_contentpipe_node_session_key
 from logutil import get_logger
 from state import ContentState
-from tools import call_llm, load_pipeline_config
+from tools import call_llm, load_pipeline_config, resolve_role_model
 from validators import (
     ValidationResult,
     build_validation_retry_message,
@@ -170,10 +170,8 @@ def _save_state(state: ContentState) -> None:
 
 
 def _get_model(role: str) -> str | None:
-    """获取角色对应的 LLM 模型（从 pipeline.yaml 的 llm_overrides 读取）"""
-    config = load_pipeline_config()
-    overrides = config.get("pipeline", {}).get("llm_overrides", {})
-    return overrides.get(role)
+    """获取角色对应的 LLM 模型（统一走 override → default_llm 解析）。"""
+    return resolve_role_model(role)
 
 
 # ── Per-Node Session 辅助 ─────────────────────────────────────

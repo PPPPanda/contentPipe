@@ -59,6 +59,29 @@ def load_pipeline_config() -> dict:
     return config
 
 
+def resolve_role_model(role: str, *, config: dict | None = None, fallback: str | None = None) -> str | None:
+    """统一的角色模型解析：先 override，再 default_llm。"""
+    cfg = config or load_pipeline_config()
+    pipeline = cfg.get("pipeline", {}) if isinstance(cfg, dict) else {}
+    overrides = pipeline.get("llm_overrides", {}) or {}
+    return overrides.get(role) or pipeline.get("default_llm") or fallback
+
+
+def get_effective_role_models(
+    roles: list[str] | None = None,
+    *,
+    config: dict | None = None,
+) -> tuple[str, dict[str, str], dict[str, str]]:
+    """返回 (default_llm, roles_map, raw_overrides)。"""
+    cfg = config or load_pipeline_config()
+    pipeline = cfg.get("pipeline", {}) if isinstance(cfg, dict) else {}
+    default_llm = pipeline.get("default_llm", "") or ""
+    overrides = pipeline.get("llm_overrides", {}) or {}
+    role_list = roles or ["scout", "researcher", "writer", "de_ai_editor", "director", "director_refine"]
+    models = {role: (resolve_role_model(role, config=cfg) or "(未配置)") for role in role_list}
+    return default_llm, models, overrides
+
+
 # ── LLM 调用 ─────────────────────────────────────────────────
 
 def call_llm(
