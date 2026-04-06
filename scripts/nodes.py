@@ -963,7 +963,39 @@ def image_gen_node(state: ContentState) -> ContentState:
     has_existing_cover = bool(existing_cover.get("success") and existing_cover.get("file_path") and os.path.exists(existing_cover.get("file_path")))
 
     placement_ids = [str(p.get("id", f"img_{i+1:03d}")) for i, p in enumerate(placements)]
-    all_placements_ready = bool(placement_ids) and all(pid in existing_generated for pid in placement_ids)
+
+    # ── Manual 模式检查 ─────────────────────────────────────
+    cfg = load_pipeline_config()
+    image_mode = cfg.get("pipeline", {}).get("image_mode", "auto")
+
+    if image_mode == "manual":
+        # Manual 模式：不做 AI 生成，只检查已上传的图片是否覆盖所有 placement
+        all_placements_ready = all(pid in existing_generated for pid in placement_ids)
+        if not all_placements_ready:
+            missing = [pid for pid in placement_ids if pid not in existing_generated]
+            logger.info("image_gen[manual]: missing images for %s, blocking", missing)
+            state["current_stage"] = "image_gen"
+            state["status"] = "review"
+            state["_manual_images_required"] = True
+            state["_missing_placement_ids"] = missing
+            _save_state(state)
+            return state
+        # 全部已上传，直接复用并进入 formatter
+        logger.info("image_gen[manual]: all %d images already provided", len(placement_ids))
+        generated = [existing_generated[pid] for pid in placement_ids]
+        state["generated_images"] = generated
+        state["generated_cover"] = existing_cover
+        state["selected_images"] = {g["placement_id"]: "A" for g in generated if g.get("success")}
+        state["current_stage"] = "image_gen"
+        _save_artifact(run_id, "generated_images.json", json.dumps(generated, ensure_ascii=False, indent=2))
+        _save_artifact(run_id, "generated_cover.json", json.dumps(existing_cover, ensure_ascii=False, indent=2))
+        # 手动模式全部就绪，直接进入 formatter（不需要再审核 image_gen）
+        state["current_stage"] = "image_gen"
+        _save_state(state)
+        return state
+
+    # ── Auto 模式（原逻辑）─────────────────────────────────
+    all_placements_ready = all(pid in existing_generated for pid in placement_ids)
     if has_existing_cover and all_placements_ready:
         logger.info("image_gen: all assets already provided, skip generation")
         generated = [existing_generated[pid] for pid in placement_ids]

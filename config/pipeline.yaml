@@ -9,7 +9,7 @@ pipeline:
   llm_mode: "gateway"
 
   # 默认模型（首次运行向导会自动检测可用模型）
-  default_llm: "anthropic-sonnet/claude-sonnet-4-6"
+  default_llm: "openai-codex/gpt-5.4-mini"
 
   # gateway 地址（通常从 OPENCLAW_GATEWAY_URL 环境变量读取）
   gateway_url: ""
@@ -21,6 +21,10 @@ pipeline:
   # 首次运行向导或设置页面会帮你配置
   llm_overrides: {}
   image_engine: llm-browser:chatgpt
+
+  # 图片生成模式: auto（AI 自动生成）或 manual（用户手动上传）
+  # manual 模式下，AI 导演审核通过后必须上传全部配图，否则弹窗提示
+  image_mode: manual
 
 # Scout 配置
 scout:

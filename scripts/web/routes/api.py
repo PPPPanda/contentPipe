@@ -1050,6 +1050,24 @@ async def api_submit_review(request: Request, run_id: str, background_tasks: Bac
 
     _save_state(raw)
 
+    # Manual 模式：director approve 时检查是否已选完所有配图
+    if action == "approve" and raw.get("current_stage") == "director":
+        from tools import load_pipeline_config
+        cfg = load_pipeline_config()
+        if cfg.get("pipeline", {}).get("image_mode") == "manual":
+            # 从 state 的 visual_plan.placements 确定需要几张图
+            visual_plan = raw.get("visual_plan", {})
+            placements = visual_plan.get("placements", []) if isinstance(visual_plan, dict) else []
+            placement_ids = [str(p.get("id", f"img_{i+1:03d}")) for i, p in enumerate(placements)]
+            # selected_images 中的 key 即 placement_id
+            selected = raw.get("selected_images", {})
+            missing = [pid for pid in placement_ids if pid not in selected]
+            if missing:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"manual_mode: missing images for placements: {missing}. Please upload all images before approving.",
+                )
+
     # SSE 事件 + Discord 反向推送
     current_node = raw.get("current_stage", "")
     if action in ("approve", "select"):
@@ -2694,6 +2712,11 @@ async def _execute_pipeline(run_id: str):
                 return
 
             # ── 交互暂停 ──
+            # Manual 模式下 image_gen_node 可能主动设置 status=review 阻断
+            if state.get("status") == "review":
+                _save_state(state)
+                emit_review_needed(run_id, node_id, node_id)
+                return
             if node_id in INTERACTIVE_NODES:
                 # 检查：全局 auto_approve 或 per-node auto_skip
                 global_auto = state.get("auto_approve", False)
