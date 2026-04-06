@@ -558,7 +558,7 @@ curl http://localhost:8765/api/info
 
 ### 6.4 开机自启（systemd）
 
-一键安装 systemd service，开机后自动跟随 Gateway 启动：
+一键安装 systemd service，开机后自动启动：
 
 ```bash
 ./start.sh install-service
@@ -573,7 +573,7 @@ sudo systemctl restart contentpipe  # 重启
 journalctl -u contentpipe -f        # 查看日志
 ```
 
-> 启动顺序：Gateway（`clawdbot.service`）先启动 → ContentPipe（`contentpipe.service`）后启动。
+> ContentPipe 是独立外部服务，不依赖 Gateway。只需网络就绪即可启动，崩溃后自动重启（`Restart=always`）。
 
 ### 6.5 生产部署 / 反向代理 / HTTPS
 

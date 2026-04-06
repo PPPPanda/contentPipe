@@ -293,8 +293,7 @@ install_service() {
     cat > "/tmp/${service_name}.service" <<EOF
 [Unit]
 Description=ContentPipe — AI 图文内容生产线
-After=network.target clawdbot.service
-Wants=clawdbot.service
+After=network.target
 
 [Service]
 Type=simple
@@ -332,7 +331,7 @@ EOF
     echo "  sudo systemctl status contentpipe   # 状态"
     echo "  journalctl -u contentpipe -f        # 日志"
     echo ""
-    echo "开机自启: ✅ 已启用（跟随 clawdbot.service 之后启动）"
+    echo "开机自启: ✅ 已启用（仅依赖网络，不依赖 Gateway）"
 }
 
 case "${1:-start}" in
