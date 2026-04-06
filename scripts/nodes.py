@@ -852,15 +852,6 @@ def director_node(state: ContentState) -> ContentState:
         f"\n--- 文章正文 ---\n{article_content}",
     ]
 
-    # 如果设置了默认风格，强制注入（设置 > AI 自由发挥）
-    cfg = load_pipeline_config()
-    preset_style = cfg.get("pipeline", {}).get("director_default_style", "").strip()
-    if preset_style:
-        context_parts.append(
-            f"\n--- 强制风格约束（来自设置） ---\n"
-            f"用户已在设置中指定配图风格为「{preset_style}」，请在 visual_plan.style 字段中直接输出该值，不要自行判断风格。"
-        )
-
     # 如果有用户反馈（阶段一循环），加入上下文
     feedback = state.get("user_feedback")
     if feedback and feedback.get("action") == "revise":

@@ -740,6 +740,69 @@
             </div>
             {% endif %}
 
+            {# AI 导演：配图风格选择器 #}
+            {% if stage == 'director' %}
+            <div class="card p-4 border border-slate-600 bg-slate-800/50 space-y-2">
+                <div class="flex items-center justify-between">
+                    <label class="text-sm text-slate-300 font-medium">🎨 配图风格</label>
+                    <span class="text-xs text-slate-500">当前：<span id="current-style-label" class="text-sky-400">{{ run.get('visual_plan', {}).get('style', '—') }}</span></span>
+                </div>
+                <select name="style_override" id="style-override-select"
+                        class="w-full bg-slate-700 border border-slate-600 rounded px-3 py-1.5 text-sm text-white focus:border-sky-500 focus:outline-none"
+                        onchange="document.getElementById('current-style-label').innerText = this.value || '—'">
+                    <option value="">— 使用 AI 导演判断 —</option>
+                    <optgroup label="科技">
+                        <option value="tech-a">tech-a（主流科技）</option>
+                        <option value="tech-b">tech-b（深度科技）</option>
+                    </optgroup>
+                    <optgroup label="政府/政策">
+                        <option value="government-a">government-a（政务传播）</option>
+                        <option value="government-b">government-b（政策解读）</option>
+                    </optgroup>
+                    <optgroup label="职场/办公">
+                        <option value="office-a">office-a（职场日常）</option>
+                        <option value="office-b">office-b（SOP/教程）</option>
+                    </optgroup>
+                    <optgroup label="营销/增长">
+                        <option value="marketing-a">marketing-a（品牌营销）</option>
+                        <option value="marketing-b">marketing-b（增长裂变）</option>
+                    </optgroup>
+                    <optgroup label="金融/商业">
+                        <option value="finance-a">finance-a（商业财经）</option>
+                        <option value="finance-b">finance-b（投资分析）</option>
+                    </optgroup>
+                    <optgroup label="学术/研究">
+                        <option value="academic-a">academic-a（学术传播）</option>
+                        <option value="academic-b">academic-b（深度研究）</option>
+                    </optgroup>
+                    <optgroup label="游戏">
+                        <option value="game-a">game-a（游戏资讯）</option>
+                        <option value="game-b">game-b（电竞/攻略）</option>
+                    </optgroup>
+                    <optgroup label="教育">
+                        <option value="education-a">education-a（教育培训）</option>
+                        <option value="education-b">education-b（教程/测评）</option>
+                    </optgroup>
+                    <optgroup label="医疗/健康">
+                        <option value="medical-a">medical-a（医疗健康）</option>
+                        <option value="medical-b">medical-b（健康养生）</option>
+                    </optgroup>
+                    <optgroup label="法律">
+                        <option value="legal-a">legal-a（法律科普）</option>
+                        <option value="legal-b">legal-b（案例解读）</option>
+                    </optgroup>
+                    <optgroup label="旅游">
+                        <option value="travel-a">travel-a（旅游出行）</option>
+                        <option value="travel-b">travel-b（游记/vlog）</option>
+                    </optgroup>
+                    <optgroup label="通用">
+                        <option value="base">base（通用基础）</option>
+                    </optgroup>
+                </select>
+                <p class="text-xs text-slate-500">选择后，排版阶段将强制使用该风格，覆盖 AI 导演的原始判断。</p>
+            </div>
+            {% endif %}
+
             <form hx-post="/api/runs/{{ run.run_id }}/review" hx-disabled-elt="find button[type='submit']" class="w-full">
                 <input type="hidden" name="action" value="approve">
                 <button type="submit"

@@ -34,8 +34,6 @@
 - `style_variant`：该模板家族下的自由变体说明（例如 satirical / flat / editorial / clean / magazine）
 - `global_tone`：一段话描述整体视觉基调（配色、氛围、密度等）
 
-> **重要**：如果输入中有「强制风格约束」段落，请**忽略以上判断，直接使用指定的 style 值**，不得自行选择。
-
 ### 2. 先设计封面，再规划正文配图
 
 你必须先输出一个 `cover` 对象，用于公众号/内容封面设计。
@@ -92,7 +90,7 @@
 ```json
 {
   "style": "tech-a",
-  "style_variant": "clean editorial",
+  "style_variant": "satirical",
   "global_tone": "现代科技感，配色以蓝绿为主，留白多，信息密度低，整体氛围安静专注",
   "cover": {
     "title": "500元上门安装，299元上门卸载",

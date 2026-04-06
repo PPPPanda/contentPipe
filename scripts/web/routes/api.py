@@ -1032,6 +1032,13 @@ async def api_submit_review(request: Request, run_id: str, background_tasks: Bac
             if selected_id:
                 parsed = _sync_scout_topic_yaml_selected_topic(run_id, selected_id)
                 _normalize_scout_selection_in_state(raw, parsed)
+        # Director 阶段可选择模板风格覆盖
+        style_override = form.get("style_override", "").strip()
+        if raw.get("current_stage") == "director" and style_override:
+            vp = raw.get("visual_plan", {})
+            vp["style"] = style_override
+            raw["visual_plan"] = vp
+            _save_artifact(run_id, "visual_plan.json", json.dumps(vp, ensure_ascii=False, indent=2))
         raw["review_action"] = "approve"
         raw["user_feedback"] = {}
     elif action == "revise":
