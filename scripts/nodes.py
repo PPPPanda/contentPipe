@@ -1148,87 +1148,25 @@ def formatter_node(state: ContentState) -> ContentState:
     """
     排版：将文章 + 选中图片嵌入微信/小红书模板。
 
-    统一复用 scripts/formatter.py 中的共享实现，避免 nodes.py 与 formatter.py
-    各自维护一套模板匹配 / 图片插入逻辑而产生漂移。
+    直接委托给 formatter.format_article()（包含预处理 + LLM 格式 patch + 插图 +
+    模板渲染 + 调试产物落盘），保持单一数据源，避免逻辑重复。
     """
-    import jinja2
     import formatter as cp_formatter
+    from pathlib import Path
 
-    article_content = state.get("article_edited") or state.get("article", {}).get("content", "")
-    article = state.get("article", {})
-    selected = state.get("selected_images", {})
-    platform = state.get("platform", "wechat")
-    visual_plan = state.get("visual_plan", {})
     run_id = state["run_id"]
-    generated_cover = state.get("generated_cover", {})
-    generated = state.get("generated_images", [])
+    platform = state.get("platform", "wechat")
+    output_dir = PROJECT_ROOT / "output" / "runs" / run_id
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    # ── Step 1: 先确定模板（要吃 director.style）──
-    director_style = visual_plan.get("style", "") if isinstance(visual_plan, dict) else ""
-    topic_keywords = state.get("topic", {}).get("keywords", []) or []
-    template_name = cp_formatter.match_template(platform, topic_keywords, director_style=director_style)
-
-    # ── Step 2: Markdown → HTML（模板感知）──
-    content_html = cp_formatter.markdown_to_wechat_html(article_content or "", platform, template_name=template_name)
-
-    # ── Step 3: 插图（共享定位算法）──
-    placements = visual_plan.get("placements", []) if isinstance(visual_plan, dict) else []
-    image_map = {}
-
-    # 先尝试 selected_images 匹配；单候选模式下 option=None 也允许 fallback
-    for pid, option in selected.items():
-        matched = None
-        for img in generated:
-            if img.get("placement_id") == pid and img.get("option") == option and img.get("success", True) and img.get("file_path"):
-                matched = img
-                break
-        if matched is None:
-            for img in generated:
-                if img.get("placement_id") == pid and img.get("success", True) and img.get("file_path"):
-                    matched = img
-                    break
-        if matched:
-            image_map[pid] = matched.get("file_path", "")
-
-    if not image_map:
-        for img in generated:
-            if img.get("success", True) and img.get("placement_id") and img.get("file_path"):
-                image_map[img["placement_id"]] = img["file_path"]
-
-    if placements and image_map:
-        content_html = cp_formatter.insert_images(content_html, placements, image_map, platform, run_id, template_name=template_name)
-
-    # ── Step 4: 渲染完整 HTML ──
-    template_path = PROJECT_ROOT / "templates" / platform / template_name
-    if not template_path.exists():
-        template_path = PROJECT_ROOT / "templates" / platform / "base.html"
-
-    template_str = template_path.read_text(encoding="utf-8")
-    config = load_pipeline_config()
-    author = config.get("wechat", {}).get("author", "ContentPipe")
-
-    cover_url = ""
-    if isinstance(generated_cover, dict) and generated_cover.get("success") and generated_cover.get("file_path"):
-        cover_url = f"/api/runs/{run_id}/images/{os.path.basename(generated_cover['file_path'])}"
-
-    tpl = jinja2.Template(template_str)
-    html = tpl.render(
-        title=article.get("title", ""),
-        subtitle=article.get("subtitle", ""),
-        author=author,
-        date=datetime.now().strftime("%Y-%m-%d"),
-        lead=article.get("subtitle", ""),
-        content=content_html,
-        category=", ".join(topic_keywords[:2]),
-        cover_url=cover_url,
-    )
+    # format_article() 内部已做：预处理 → LLM patch → Markdown→HTML → 插图 → 模板渲染
+    # 它返回完整 HTML 字符串，同时把 formatted.html / content_body.html /
+    # formatter_input_prepared.md / formatter_style_patch_last.json 写盘
+    html = cp_formatter.format_article(run_id, output_dir, platform)
 
     state["formatted_html"] = html
     state["current_stage"] = "formatter"
-    _save_artifact(run_id, "formatted.html", html)
-    _save_artifact(run_id, "content_body.html", content_html)
     _save_state(state)
-    logger.info("Formatted: %s chars, %s images inserted, template=%s", len(html), len(image_map), template_name)
     return state
 
 
