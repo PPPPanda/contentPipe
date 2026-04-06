@@ -12,6 +12,7 @@ ContentPipe Formatter — Markdown → 微信/小红书兼容 HTML
 from __future__ import annotations
 
 import argparse
+from typing import Any
 import html as html_mod
 import json
 import os
@@ -24,6 +25,7 @@ import jinja2
 import yaml
 
 from logutil import get_logger
+from tools import call_llm, load_pipeline_config, resolve_role_model
 
 logger = get_logger(__name__)
 
@@ -36,8 +38,244 @@ DEFAULT_OUTPUT_BASE = Path(__file__).parent.parent.parent.parent / "work" / "con
 
 # ── Markdown → 微信 HTML ────────────────────────────────────
 
+SECTION_HEADING_RE = re.compile(r"^[一二三四五六七八九十]+、.+")
+ORPHAN_BULLET_RE = re.compile(r"^[●•·]$")
+ORPHAN_NUMBER_RE = re.compile(r"^(\d+)[\.、]$")
+FORMAT_PATCH_STYLES = {"strong"}
+TERM_PATCH_STYLES = {"risk", "accent"}
+
+
+def _normalize_text_spacing(text: str) -> str:
+    text = str(text or "").replace("\u00a0", " ").replace("\u200b", "")
+    text = re.sub(r"[ \t]+", " ", text).strip()
+    text = re.sub(r"\s+([，。！？：；、）》】）])", r"\1", text)
+    text = re.sub(r"([（《【“‘])\s+", r"\1", text)
+    text = re.sub(r"([，。！？：；、])\s+(?=[\u4e00-\u9fff])", r"\1", text)
+    return text.strip()
+
+
+def _looks_like_section_heading(text: str) -> bool:
+    stripped = text.strip()
+    if not stripped:
+        return False
+    if SECTION_HEADING_RE.match(stripped):
+        return True
+    if re.match(r"^(结语|结尾|总结)[:：].+", stripped):
+        return True
+    return False
+
+
+def _preprocess_markdown(md_text: str) -> str:
+    lines = str(md_text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    normalized: list[str] = []
+    in_code_block = False
+    i = 0
+
+    while i < len(lines):
+        raw = lines[i].rstrip()
+        stripped = raw.strip()
+
+        if stripped.startswith("```"):
+            in_code_block = not in_code_block
+            normalized.append(stripped)
+            i += 1
+            continue
+
+        if in_code_block:
+            normalized.append(raw)
+            i += 1
+            continue
+
+        if not stripped:
+            if normalized and normalized[-1] != "":
+                normalized.append("")
+            i += 1
+            continue
+
+        next_idx = i + 1
+        while next_idx < len(lines) and not lines[next_idx].strip():
+            next_idx += 1
+        next_line = lines[next_idx].strip() if next_idx < len(lines) else ""
+
+        if ORPHAN_BULLET_RE.match(stripped) and next_line and not re.match(r"^[-*]\s+|^\d+[\.、]\s+|^#+\s|^>\s", next_line):
+            normalized.append(f"- {_normalize_text_spacing(next_line)}")
+            i = next_idx + 1
+            continue
+
+        m = ORPHAN_NUMBER_RE.match(stripped)
+        if m and next_line and not re.match(r"^[-*]\s+|^\d+[\.、]\s+|^#+\s|^>\s", next_line):
+            normalized.append(f"{m.group(1)}. {_normalize_text_spacing(next_line)}")
+            i = next_idx + 1
+            continue
+
+        cleaned = _normalize_text_spacing(stripped)
+        if _looks_like_section_heading(cleaned):
+            normalized.append(f"## {cleaned}")
+        else:
+            normalized.append(cleaned)
+        i += 1
+
+    compacted: list[str] = []
+    for line in normalized:
+        if line == "" and compacted and compacted[-1] == "":
+            continue
+        compacted.append(line)
+
+    return "\n".join(compacted).strip()
+
+
+def _build_format_line_map(md_text: str) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for idx, line in enumerate(md_text.split("\n"), 1):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        kind = "paragraph"
+        if stripped.startswith("## "):
+            kind = "h2"
+        elif stripped.startswith("### "):
+            kind = "h3"
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            kind = "ul"
+        elif re.match(r"^\d+[\.、]\s+", stripped):
+            kind = "ol"
+        elif stripped.startswith("> "):
+            kind = "blockquote"
+        rows.append({"line_no": idx, "kind": kind, "text": stripped[:500]})
+    return rows
+
+
+def _validate_format_patch(md_text: str, patch_obj: dict) -> tuple[list[dict], list[dict]]:
+    line_map = {row["line_no"]: row for row in _build_format_line_map(md_text)}
+    line_styles = patch_obj.get("line_styles", []) or []
+    term_styles = patch_obj.get("term_styles", []) or []
+    if not isinstance(line_styles, list) or not isinstance(term_styles, list):
+        raise ValueError("format patch fields line_styles/term_styles must be arrays")
+
+    valid_line_styles: list[dict] = []
+    for item in line_styles[:10]:
+        if not isinstance(item, dict):
+            continue
+        line_no = int(item.get("line_no", 0) or 0)
+        style = str(item.get("style", "") or "").strip()
+        if style not in FORMAT_PATCH_STYLES or line_no not in line_map:
+            continue
+        kind = line_map[line_no]["kind"]
+        if style == "strong" and kind not in {"paragraph", "blockquote"}:
+            continue
+        valid_line_styles.append({"line_no": line_no, "style": style})
+
+    valid_term_styles: list[dict] = []
+    for item in term_styles[:24]:
+        if not isinstance(item, dict):
+            continue
+        line_no = int(item.get("line_no", 0) or 0)
+        term = str(item.get("term", "") or "").strip()
+        style = str(item.get("style", "") or "").strip()
+        if line_no not in line_map or style not in TERM_PATCH_STYLES:
+            continue
+        if not term or len(term) > 40:
+            continue
+        if term not in line_map[line_no]["text"]:
+            continue
+        valid_term_styles.append({"line_no": line_no, "term": term, "style": style})
+
+    return valid_line_styles, valid_term_styles
+
+
+def _apply_term_markers(text: str, terms: list[dict]) -> str:
+    out = text
+    for item in sorted(terms, key=lambda x: len(x["term"]), reverse=True):
+        term = item["term"]
+        marker = "RISK" if item["style"] == "risk" else "ACCENT"
+        if f"[[{marker}:{term}]]" in out:
+            continue
+        out = out.replace(term, f"[[{marker}:{term}]]", 1)
+    return out
+
+
+def _apply_format_patch(md_text: str, line_styles: list[dict], term_styles: list[dict]) -> str:
+    by_line_terms: dict[int, list[dict]] = {}
+    by_line_style: dict[int, str] = {}
+    for item in line_styles:
+        by_line_style[item["line_no"]] = item["style"]
+    for item in term_styles:
+        by_line_terms.setdefault(item["line_no"], []).append(item)
+
+    output_lines: list[str] = []
+    for idx, raw in enumerate(md_text.split("\n"), 1):
+        line = raw
+        stripped = line.strip()
+        if not stripped:
+            output_lines.append(line)
+            continue
+        if idx in by_line_terms:
+            line = _apply_term_markers(line, by_line_terms[idx])
+            stripped = line.strip()
+        style = by_line_style.get(idx)
+        if style == "blockquote" and not stripped.startswith("> "):
+            line = "> " + stripped
+        elif style == "strong":
+            base = stripped
+            if base.startswith("> "):
+                payload = base[2:].strip()
+                if not payload.startswith("**"):
+                    line = "> **" + payload + "**"
+            elif not base.startswith("**"):
+                line = "**" + base + "**"
+        output_lines.append(line)
+    return "\n".join(output_lines)
+
+
+def _suggest_format_patch(run_id: str, md_text: str, platform: str, template_name: str, state: dict | None = None) -> tuple[str, dict]:
+    line_map = _build_format_line_map(md_text)
+    if not line_map:
+        return md_text, {"applied": False, "reason": "empty"}
+
+    cfg = load_pipeline_config()
+    model = resolve_role_model("formatter", config=cfg) or resolve_role_model("director_refine", config=cfg) or resolve_role_model("writer", config=cfg)
+    if not model:
+        return md_text, {"applied": False, "reason": "no-model"}
+
+    topic_title = ((state or {}).get("topic") or {}).get("title", "")
+    article_title = ((state or {}).get("article") or {}).get("title", "")
+    system_prompt = """你是微信公众号排版编辑，只负责提出结构化的轻量强调建议，不改正文事实。\n
+目标：\n1. 找出适合轻量强调的术语或风险词；\n2. 如有必要，可把极少数短句做 strong 强调；\n3. 只输出 JSON，不要输出正文。\n
+约束：\n- 只能修改给定行号中的格式，不能改写正文内容。\n- 不负责决定哪些句子做引用框；引用框由 Python 规则处理。\n- 术语强调要克制，整篇不要超过 24 处。\n- strong 强调最多 3 处。\n- 返回 schema: {reply, line_styles:[{line_no,style}], term_styles:[{line_no,term,style}]}\n"""
+    user_input = json.dumps({
+        "run_id": run_id,
+        "platform": platform,
+        "template": template_name,
+        "topic_title": topic_title,
+        "article_title": article_title,
+        "lines": line_map,
+    }, ensure_ascii=False, indent=2)
+    raw = call_llm(
+        system_prompt,
+        user_input,
+        model=model,
+        response_format="json",
+        chat_history=[],
+        system_prompt=system_prompt,
+        gateway_agent_id="contentpipe-blank",
+        gateway_session_key=f"contentpipe:{run_id}:formatter-refine:main",
+    )
+    parsed = json.loads(raw)
+    valid_line_styles, valid_term_styles = _validate_format_patch(md_text, parsed)
+    patched = _apply_format_patch(md_text, valid_line_styles, valid_term_styles)
+    meta = {
+        "applied": bool(valid_line_styles or valid_term_styles),
+        "model": model,
+        "reply": parsed.get("reply", ""),
+        "line_styles": valid_line_styles,
+        "term_styles": valid_term_styles,
+    }
+    return patched, meta
+
+
 def markdown_to_wechat_html(md_text: str, platform: str = "wechat", template_name: str = "") -> str:
     """Markdown → 微信兼容内联样式 HTML（微信禁止 class/外部 CSS）"""
+    md_text = _preprocess_markdown(md_text)
     lines = md_text.strip().split("\n")
     html_parts: list[str] = []
     in_list = False
@@ -220,6 +458,8 @@ def _get_platform_styles(platform: str, template_name: str = "") -> dict[str, st
             "blockquote": f'style="border-left:3px solid {accent};padding:8px 14px;color:#666;background:{soft};border:1px solid #ececec;margin:16px 0;border-radius:0 6px 6px 0;"',
             "li": 'style="font-size:16px;color:#333;margin:4px 0;line-height:1.8;"',
             "strong": 'style="color:#1f2937;"',
+            "accent_color": accent,
+            "risk_color": "#d9485f",
         }
     else:  # xhs
         return {
@@ -229,11 +469,26 @@ def _get_platform_styles(platform: str, template_name: str = "") -> dict[str, st
             "blockquote": 'style="border-left:3px solid #ff2442;padding:6px 12px;color:#666;background:#fff5f5;margin:12px 0;"',
             "li": 'style="font-size:15px;color:#333;margin:3px 0;"',
             "strong": 'style="color:#ff2442;"',
+            "accent_color": "#ff2442",
+            "risk_color": "#d9485f",
         }
 
 
 def _inline_format(text: str, styles: dict) -> str:
-    """行内格式：加粗、斜体、行内代码、链接"""
+    """行内格式：加粗、斜体、行内代码、链接 + LLM 建议的强调 marker"""
+    text = _normalize_text_spacing(text)
+
+    text = re.sub(
+        r"\[\[RISK:(.+?)\]\]",
+        lambda m: f'<span style="color:{styles.get("risk_color", "#d9485f")};font-weight:700;">{m.group(1)}</span>',
+        text,
+    )
+    text = re.sub(
+        r"\[\[ACCENT:(.+?)\]\]",
+        lambda m: f'<span style="color:{styles.get("accent_color", "#1e90ff")};font-weight:700;">{m.group(1)}</span>',
+        text,
+    )
+
     text = re.sub(r"\*\*(.+?)\*\*", rf'<strong {styles["strong"]}>\1</strong>', text)
     text = re.sub(r"\*(.+?)\*", r"<em>\1</em>", text)
     text = re.sub(r"`(.+?)`", r'<code style="background:#f0f0f0;padding:2px 6px;border-radius:3px;font-size:14px;color:#d63384;">\1</code>', text)
@@ -492,13 +747,28 @@ def format_article(run_id: str, output_dir: Path, platform: str = "wechat") -> s
     visual_plan = state.get("visual_plan", {})
     selected = state.get("selected_images", {})
     generated = state.get("generated_images", [])
+    generated_cover = state.get("generated_cover", {}) or {}
+
+    cover_url = ""
+    cover_file = generated_cover.get("file_path", "") if isinstance(generated_cover, dict) else ""
+    if cover_file:
+        cover_name = Path(cover_file).name
+        cover_url = f"/api/runs/{run_id}/images/{cover_name}"
 
     # Step 1: 匹配模板（先确定模板，因为内联样式依赖模板类型）
     director_style = visual_plan.get("style", "")
     template_name = match_template(platform, topic.get("keywords", []), director_style=director_style)
 
-    # Step 2: Markdown → HTML（传入 template_name 让内联样式适配模板）
-    content_html = markdown_to_wechat_html(article_edited, platform, template_name=template_name)
+    # Step 2: 规则清洗 + LLM 格式建议 patch（结构化）→ HTML
+    prepared_md = _preprocess_markdown(article_edited)
+    format_patch_meta = {"applied": False, "reason": "skipped"}
+    try:
+        patched_md, format_patch_meta = _suggest_format_patch(run_id, prepared_md, platform, template_name, state=state)
+        prepared_md = patched_md
+    except Exception as e:
+        format_patch_meta = {"applied": False, "reason": f"llm-patch-failed: {e}"}
+        logger.warning("formatter style patch failed for %s: %s", run_id, e)
+    content_html = markdown_to_wechat_html(prepared_md, platform, template_name=template_name)
 
     # Step 3: 插入图片
     placements = visual_plan.get("placements", [])
@@ -535,13 +805,19 @@ def format_article(run_id: str, output_dir: Path, platform: str = "wechat") -> s
             lead=article.get("subtitle", ""),
             content=content_html,
             category=", ".join(topic.get("keywords", [])[:2]),
+            cover_url=cover_url,
         )
 
     # 保存
     (output_dir / "formatted.html").write_text(html, encoding="utf-8")
     (output_dir / "content_body.html").write_text(content_html, encoding="utf-8")
+    (output_dir / "formatter_input_prepared.md").write_text(prepared_md, encoding="utf-8")
+    (output_dir / "formatter_style_patch_last.json").write_text(
+        json.dumps(format_patch_meta, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
-    logger.info("Formatted: %s chars, %s images, template=%s", len(html), len(image_map), template_name)
+    logger.info("Formatted: %s chars, %s images, template=%s, style_patch=%s", len(html), len(image_map), template_name, format_patch_meta.get("applied"))
     return html
 
 
