@@ -24,9 +24,17 @@
 ### 1. 确定全局视觉风格
 
 根据文章主题和平台，输出：
-- `style`：**封闭枚举，只能从以下值中选择一个**：`tech-digital` / `business-finance` / `news-insight` / `lifestyle` / `education`
+- `style`：**封闭枚举，只能从以下值中选择一个**：
+  `tech-a` / `tech-b` / `government-a` / `government-b` / `office-a` / `office-b` /
+  `marketing-a` / `marketing-b` / `finance-a` / `finance-b` / `academic-a` / `academic-b` /
+  `game-a` / `game-b` / `education-a` / `education-b` / `medical-a` / `medical-b` /
+  `legal-a` / `legal-b` / `travel-a` / `travel-b` / `base`
+  - A 版本（-a）：适合主流大众内容
+  - B 版本（-b）：适合深度分析、垂类专业内容
 - `style_variant`：该模板家族下的自由变体说明（例如 satirical / flat / editorial / clean / magazine）
 - `global_tone`：一段话描述整体视觉基调（配色、氛围、密度等）
+
+> **重要**：如果输入中有「强制风格约束」段落，请**忽略以上判断，直接使用指定的 style 值**，不得自行选择。
 
 ### 2. 先设计封面，再规划正文配图
 
@@ -83,8 +91,8 @@
 
 ```json
 {
-  "style": "tech-digital",
-  "style_variant": "satirical",
+  "style": "tech-a",
+  "style_variant": "clean editorial",
   "global_tone": "现代科技感，配色以蓝绿为主，留白多，信息密度低，整体氛围安静专注",
   "cover": {
     "title": "500元上门安装，299元上门卸载",

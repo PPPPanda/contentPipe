@@ -26,6 +26,14 @@ pipeline:
   # manual 模式下，AI 导演审核通过后必须上传全部配图，否则弹窗提示
   image_mode: manual
 
+  # AI 导演默认配图风格（对应 templates/wechat/ 下的模板）
+  # 可选值：tech-a, tech-b, government-a, government-b, office-a, office-b,
+  #         marketing-a, marketing-b, finance-a, finance-b, academic-a, academic-b,
+  #         game-a, game-b, education-a, education-b, medical-a, medical-b,
+  #         legal-a, legal-b, travel-a, travel-b, base
+  # 设置后，Director 输出的 visual_plan.style 将强制使用此值
+  director_default_style: ""
+
 # Scout 配置
 scout:
   domain_keywords:

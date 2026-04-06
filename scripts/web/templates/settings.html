@@ -157,6 +157,72 @@
         </div>
     </div>
 
+    <!-- AI 导演配图风格 -->
+    <div class="card p-5">
+        <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">🎬 AI 导演配图风格</h2>
+        <div class="mb-3 p-3 rounded-lg bg-slate-800/50 border border-slate-700 text-xs text-slate-400 leading-relaxed">
+            设置后，AI 导演输出的配图方案将强制使用指定风格，覆盖 AI 自主判断。
+            <br>留空＝让 AI 根据文章主题自行判断风格。
+            <br>A 版本适合主流大众内容，B 版本适合深度分析/专业内容。
+        </div>
+        <div class="space-y-3">
+            <div class="flex items-center gap-4">
+                <label class="w-28 text-sm text-slate-300">风格选择</label>
+                <select name="director_default_style"
+                        class="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-sm focus:border-sky-500 focus:outline-none">
+                    <option value="">— 由 AI 自行判断 —</option>
+                    <optgroup label="科技">
+                        <option value="tech-a" {% if pipeline.get('director_default_style') == 'tech-a' %}selected{% endif %}>tech-a（主流科技）</option>
+                        <option value="tech-b" {% if pipeline.get('director_default_style') == 'tech-b' %}selected{% endif %}>tech-b（深度科技）</option>
+                    </optgroup>
+                    <optgroup label="政府/政策">
+                        <option value="government-a" {% if pipeline.get('director_default_style') == 'government-a' %}selected{% endif %}>government-a（政务传播）</option>
+                        <option value="government-b" {% if pipeline.get('director_default_style') == 'government-b' %}selected{% endif %}>government-b（政策解读）</option>
+                    </optgroup>
+                    <optgroup label="职场/办公">
+                        <option value="office-a" {% if pipeline.get('director_default_style') == 'office-a' %}selected{% endif %}>office-a（职场日常）</option>
+                        <option value="office-b" {% if pipeline.get('director_default_style') == 'office-b' %}selected{% endif %}>office-b（SOP/教程）</option>
+                    </optgroup>
+                    <optgroup label="营销/增长">
+                        <option value="marketing-a" {% if pipeline.get('director_default_style') == 'marketing-a' %}selected{% endif %}>marketing-a（品牌营销）</option>
+                        <option value="marketing-b" {% if pipeline.get('director_default_style') == 'marketing-b' %}selected{% endif %}>marketing-b（增长裂变）</option>
+                    </optgroup>
+                    <optgroup label="金融/商业">
+                        <option value="finance-a" {% if pipeline.get('director_default_style') == 'finance-a' %}selected{% endif %}>finance-a（商业财经）</option>
+                        <option value="finance-b" {% if pipeline.get('director_default_style') == 'finance-b' %}selected{% endif %}>finance-b（投资分析）</option>
+                    </optgroup>
+                    <optgroup label="学术/研究">
+                        <option value="academic-a" {% if pipeline.get('director_default_style') == 'academic-a' %}selected{% endif %}>academic-a（学术传播）</option>
+                        <option value="academic-b" {% if pipeline.get('director_default_style') == 'academic-b' %}selected{% endif %}>academic-b（深度研究）</option>
+                    </optgroup>
+                    <optgroup label="游戏">
+                        <option value="game-a" {% if pipeline.get('director_default_style') == 'game-a' %}selected{% endif %}>game-a（游戏资讯）</option>
+                        <option value="game-b" {% if pipeline.get('director_default_style') == 'game-b' %}selected{% endif %}>game-b（电竞/攻略）</option>
+                    </optgroup>
+                    <optgroup label="教育">
+                        <option value="education-a" {% if pipeline.get('director_default_style') == 'education-a' %}selected{% endif %}>education-a（教育培训）</option>
+                        <option value="education-b" {% if pipeline.get('director_default_style') == 'education-b' %}selected{% endif %}>education-b（教程/测评）</option>
+                    </optgroup>
+                    <optgroup label="医疗/健康">
+                        <option value="medical-a" {% if pipeline.get('director_default_style') == 'medical-a' %}selected{% endif %}>medical-a（医疗健康）</option>
+                        <option value="medical-b" {% if pipeline.get('director_default_style') == 'medical-b' %}selected{% endif %}>medical-b（健康养生）</option>
+                    </optgroup>
+                    <optgroup label="法律">
+                        <option value="legal-a" {% if pipeline.get('director_default_style') == 'legal-a' %}selected{% endif %}>legal-a（法律科普）</option>
+                        <option value="legal-b" {% if pipeline.get('director_default_style') == 'legal-b' %}selected{% endif %}>legal-b（案例解读）</option>
+                    </optgroup>
+                    <optgroup label="旅游">
+                        <option value="travel-a" {% if pipeline.get('director_default_style') == 'travel-a' %}selected{% endif %}>travel-a（旅游出行）</option>
+                        <option value="travel-b" {% if pipeline.get('director_default_style') == 'travel-b' %}selected{% endif %}>travel-b（游记/vlog）</option>
+                    </optgroup>
+                    <optgroup label="通用">
+                        <option value="base" {% if pipeline.get('director_default_style') == 'base' %}selected{% endif %}>base（通用基础）</option>
+                    </optgroup>
+                </select>
+            </div>
+        </div>
+    </div>
+
     <!-- 微信公众号 -->
     <div class="card p-5">
         <h2 class="text-sm font-semibold text-slate-400 uppercase tracking-wider mb-4">📱 微信公众号</h2>
